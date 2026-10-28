@@ -1,0 +1,22 @@
+export { IntelligentGrid, IntelligentGrid as default } from './ui/grid.js';
+export type { DistinctValue, SetCellResult } from './ui/grid.js';
+export { SorlaStore, compareCells } from './core/store.js';
+export { ChangeTracker } from './core/changes.js';
+export type { ChangeSet, ChangeSummary, DeletedRow, FieldChange, HistoryEntry, InsertedRow, UpdatedRow } from './core/changes.js';
+export { compileFilters, operatorsFor } from './core/filters.js';
+export { TYPES, formatCell, parseInput, validateValue, excelFormatCode } from './core/columns.js';
+export { CalcEngine } from './formula/engine.js';
+export { compile, evaluate, isFormula } from './formula/evaluator.js';
+export type { EvaluationContext } from './formula/evaluator.js';
+export { parse, toExcelFormula, collectDependencies } from './formula/parser.js';
+export type { AstNode } from './formula/parser.js';
+export { defineFunction, defineLazyFunction, listFunctions } from './formula/functions.js';
+export type { FormulaFunction, FunctionContext, LazyFormulaFunction } from './formula/functions.js';
+export type { FormulaValue } from './formula/values.js';
+export { formatValue } from './formula/numfmt.js';
+export { FormulaError, ERRORS } from './formula/errors.js';
+export { toCSV } from './export/csv.js';
+export { toXLSX } from './export/xlsx.js';
+export { zip } from './export/zip.js';
+export type * from './types.js';
+//# sourceMappingURL=index.d.ts.map

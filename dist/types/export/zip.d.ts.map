@@ -1,0 +1,1 @@
+{"version":3,"file":"zip.d.ts","sourceRoot":"","sources":["../../../src/export/zip.ts"],"names":[],"mappings":"AAaA,wBAAgB,KAAK,CAAC,KAAK,EAAE,UAAU,GAAG,MAAM,CAI/C;AAED,MAAM,WAAW,QAAQ;IACrB,IAAI,EAAE,MAAM,CAAC;IACb,IAAI,EAAE,MAAM,GAAG,UAAU,CAAC;CAC7B;AAED,wBAAgB,GAAG,CAAC,KAAK,EAAE,QAAQ,EAAE,GAAG,UAAU,CAAC,WAAW,CAAC,CA4D9D"}
