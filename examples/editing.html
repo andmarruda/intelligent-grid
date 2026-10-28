@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Editing &amp; validation · Intelligent Grid</title>
+    <link rel="stylesheet" href="../dist/intelligent-grid.css">
+    <link rel="stylesheet" href="./shared.css">
+</head>
+<body>
+<main>
+    <nav class="back"><a href="./index.html">← All examples</a></nav>
+    <header>
+        <h1>Editing &amp; validation</h1>
+        <p>Double-click, press Enter/F2 or just start typing on a cell. Enter/Tab commit and move, Esc cancels, Delete clears. Paste a block copied from Excel with Ctrl+V. Every change goes through parsing, validation and the <code>beforeCellChange</code> / <code>cellChange</code> events (see the log).</p>
+    </header>
+    <div class="toolbar">
+        <label><input type="checkbox" id="lock" checked> Block "Done" when the order is not paid (beforeChange)</label>
+        <button id="api">grid.setCellValue(1, 'qty', 99)</button>
+    </div>
+    <div id="grid"></div>
+    <pre class="log" id="log"></pre>
+</main>
+<script src="../node_modules/sorla-db/dist/sorla.min.js"></script>
+<script type="module">
+    import { IntelligentGrid } from '../dist/index.js';
+    import { orders, CITIES, STATUS, logger } from './data.js';
+
+    const log = logger(document.querySelector('#log'));
+
+    // A custom editor: 1-5 stars as a range input. getValue() returns the final typed value.
+    const ratingEditor = {
+        create({ value }) {
+            const input = document.createElement('input');
+            input.type = 'range';
+            input.min = '1';
+            input.max = '5';
+            input.value = String(value ?? 3);
+            input.className = 'ig-editor';
+            return { element: input, getValue: () => Number(input.value), focus: () => input.focus() };
+        }
+    };
+
+    const lock = document.querySelector('#lock');
+    const grid = new IntelligentGrid('#grid', {
+        locale: 'en-US',
+        idField: 'id',
+        editable: true,
+        height: 420,
+        data: orders(60).map(row => ({ ...row, rating: 1 + (row.id % 5), notes: '' })),
+        navbar: { title: 'Editable orders', add: () => ({ product: 'New item', qty: 1, price: 0, status: 'open' }), delete: true, export: false },
+        columns: [
+            { field: 'id', title: '#', type: 'integer', width: 70, editable: false },
+            { field: 'product', title: 'Product', validate: { required: true, maxLength: 30 } },
+            { field: 'city', title: 'City', options: CITIES },
+            { field: 'qty', title: 'Qty', type: 'integer', width: 80, validate: [{ min: 1, max: 500 }, (value, row) => value % 1 === 0 || 'Whole units only'] },
+            { field: 'price', title: 'Price', type: 'currency', currency: 'USD', validate: { min: 0 } },
+            { field: 'due', title: 'Due', type: 'date', validate: { min: '2026-01-01', message: 'Due date must be in 2026' } },
+            { field: 'paid', title: 'Paid', type: 'boolean', width: 80 },
+            {
+                field: 'status', title: 'Status', options: STATUS,
+                beforeChange: ({ value, row }) => lock.checked && value === 'done' && !row.paid ? false : value
+            },
+            { field: 'rating', title: 'Rating', type: 'integer', width: 90, editor: ratingEditor, format: v => '★'.repeat(v ?? 0) },
+            { field: 'notes', title: 'Notes', editor: 'textarea', editable: row => row?.status !== 'done' }
+        ],
+        on: {
+            beforeCellEdit: e => log('beforeCellEdit', e.detail.field),
+            beforeCellChange: e => {
+                // handlers may rewrite the value before it is stored
+                if (e.detail.field === 'product' && typeof e.detail.value === 'string') e.detail.value = e.detail.value.trim();
+            },
+            cellChange: e => log('cellChange', `#${e.detail.id}.${e.detail.field}:`, e.detail.oldValue, '→', e.detail.value, `(${e.detail.source})`),
+            validationError: e => log('validationError', e.detail.field, e.detail.message),
+            rowAdd: e => log('rowAdd', e.detail.row),
+            rowDelete: e => log('rowDelete', e.detail.ids),
+            paste: e => log('paste', `${e.detail.results.length} cells`)
+        }
+    });
+
+    document.querySelector('#api').addEventListener('click', () => log('setCellValue →', grid.setCellValue('1', 'qty', 99)));
+    window.grid = grid;
+</script>
+</body>
+</html>

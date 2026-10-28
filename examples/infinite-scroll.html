@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Infinite scroll (append mode) · Intelligent Grid</title>
+    <link rel="stylesheet" href="../dist/intelligent-grid.css">
+    <link rel="stylesheet" href="./shared.css">
+</head>
+<body>
+<main>
+    <nav class="back"><a href="./index.html">← All examples</a></nav>
+    <header>
+        <h1>Infinite scroll (append mode)</h1>
+        <p>Rows arrive 50 at a time from an async loader (a fake API with 300 ms latency). With <code>serverSide: true</code> sort, filters and search are sent to the loader and the list reloads; with <code>false</code> they apply to the rows already loaded.</p>
+    </header>
+    <div class="toolbar">
+        <label>serverSide <select id="mode"><option value="true">true</option><option value="false">false</option></select></label>
+        <button id="reload">grid.reload()</button>
+    </div>
+    <div id="grid"></div>
+    <pre class="log" id="log"></pre>
+</main>
+<script src="../node_modules/sorla-db/dist/sorla.min.js"></script>
+<script type="module">
+    import { IntelligentGrid } from '../dist/index.js';
+    import { customers, logger } from './data.js';
+
+    const log = logger(document.querySelector('#log'));
+    const database = customers(1000);
+
+    // stands in for fetch(`/api/customers?offset=${offset}&limit=${limit}...`)
+    async function fakeApi({ offset, limit, sort, search }) {
+        await new Promise(resolve => setTimeout(resolve, 300));
+        let rows = database.filter(r => !search || r.name.toLowerCase().includes(search.toLowerCase()) || r.city.toLowerCase().includes(search.toLowerCase()));
+        for (const { field, dir } of [...sort].reverse()) {
+            rows = [...rows].sort((a, b) => (a[field] > b[field] ? 1 : a[field] < b[field] ? -1 : 0) * (dir === 'desc' ? -1 : 1));
+        }
+        return { rows: rows.slice(offset, offset + limit), total: rows.length, hasMore: offset + limit < rows.length };
+    }
+
+    let grid;
+    function create(serverSide) {
+        grid?.destroy();
+        grid = new IntelligentGrid('#grid', {
+            locale: 'en-US',
+            idField: 'id',
+            height: 380,
+            selection: { mode: 'single', checkbox: false },
+            navbar: { search: true, export: ['csv'] },
+            append: { pageSize: 50, threshold: 150, serverSide, load: fakeApi },
+            columns: [
+                { field: 'id', title: '#', type: 'integer', width: 80 },
+                { field: 'name', title: 'Name' },
+                { field: 'city', title: 'City' },
+                { field: 'score', title: 'Score', type: 'integer', footer: 'avg', decimals: 0 },
+                { field: 'joined', title: 'Joined', type: 'date' },
+                { field: 'tier', title: 'Tier', formula: '=IFS([@score]>=80,"Gold",[@score]>=50,"Silver",TRUE,"Bronze")' }
+            ],
+            on: {
+                loadStart: e => log('loadStart', { offset: e.detail.offset, sort: e.detail.sort, search: e.detail.search }),
+                loadEnd: e => log('loadEnd', `${e.detail.rows} rows, hasMore=${e.detail.hasMore}, total=${e.detail.total}`),
+                scrollEnd: () => log('scrollEnd: everything is loaded')
+            }
+        });
+        window.grid = grid;
+    }
+
+    document.querySelector('#mode').addEventListener('change', e => create(e.target.value === 'true'));
+    document.querySelector('#reload').addEventListener('click', () => grid.reload());
+    create(true);
+</script>
+</body>
+</html>

@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Formulas · Intelligent Grid</title>
+    <link rel="stylesheet" href="../dist/intelligent-grid.css">
+    <link rel="stylesheet" href="./shared.css">
+</head>
+<body>
+<main>
+    <nav class="back"><a href="./index.html">← All examples</a></nav>
+    <header>
+        <h1>Formulas</h1>
+        <p>Calculated columns use Excel structured references: <code>[@qty]</code> is this row, <code>[total]</code> the whole column. Type <code>=</code> in an editable cell to override just that cell. Footers aggregate the filtered rows. Export to Excel keeps the formulas.</p>
+    </header>
+    <div class="toolbar">
+        <input id="formula" size="48" value="=SUMIFS([total],[city],&quot;São Paulo&quot;)">
+        <button id="evaluate">grid.evaluate()</button>
+        <strong id="result"></strong>
+    </div>
+    <div class="toolbar">
+        <button id="tax">Change tax column to 20%</button>
+        <button id="override">Cell formula on row 1 price: =[@qty]*2</button>
+        <button id="xlsx">Export Excel (with formulas)</button>
+    </div>
+    <div id="grid"></div>
+    <pre class="log" id="log"></pre>
+</main>
+<script src="../node_modules/sorla-db/dist/sorla.min.js"></script>
+<script type="module">
+    import { IntelligentGrid, FormulaError, ERRORS } from '../dist/index.js';
+    import { orders, CITIES, logger } from './data.js';
+
+    const log = logger(document.querySelector('#log'));
+
+    // a global custom function, available in every grid: =SHIPPING([@qty])
+    IntelligentGrid.defineFunction('SHIPPING', ([qty]) => {
+        if (typeof qty !== 'number' || qty < 0) throw new FormulaError(ERRORS.VALUE);
+        return qty > 10 ? 0 : 5;
+    });
+
+    const grid = new IntelligentGrid('#grid', {
+        locale: 'en-US',
+        idField: 'id',
+        editable: true,
+        height: 420,
+        names: { TAX: 0.12 },
+        data: orders(120),
+        exportOptions: { filename: 'orders-with-formulas', sheetName: 'Orders' },
+        columns: [
+            { field: 'id', title: '#', type: 'integer', width: 60, editable: false },
+            { field: 'product', title: 'Product', width: 130 },
+            { field: 'city', title: 'City', options: CITIES, width: 140 },
+            { field: 'qty', title: 'Qty', type: 'integer', width: 70, footer: 'sum' },
+            { field: 'price', title: 'Price', type: 'currency', currency: 'USD', footer: 'avg' },
+            { field: 'discount', title: 'Disc.', type: 'percent', width: 80 },
+            { field: 'subtotal', title: 'Subtotal', type: 'currency', currency: 'USD', formula: '=[@qty]*[@price]*(1-[@discount])' },
+            { field: 'tax', title: 'Tax', type: 'currency', currency: 'USD', formula: '=ROUND([@subtotal]*TAX,2)' },
+            { field: 'shipping', title: 'Ship.', type: 'currency', currency: 'USD', width: 80, formula: '=SHIPPING([@qty])' },
+            {
+                field: 'total', title: 'Total', type: 'currency', currency: 'USD', footer: 'sum',
+                formula: '=[@subtotal]+[@tax]+[@shipping]',
+                conditionalFormats: [{ formula: '=[@total]>=PERCENTILE([total],0.9)', style: { color: '#0b7a3e', fontWeight: '600' } }]
+            },
+            { field: 'share', title: 'Share', type: 'percent', decimals: 2, formula: '=[@total]/SUM([total])', footer: 'sum' },
+            { field: 'rank', title: 'Rank', type: 'integer', width: 70, formula: '=RANK([@total],[total])' },
+            { field: 'due', title: 'Due', type: 'date', footer: '=TEXT(MIN([due]),"yyyy-mm-dd")' },
+            { field: 'month', title: 'Month', width: 90, formula: '=TEXT([@due],"mmm yy")' },
+            { field: 'label', title: 'Label', formula: '=IFS([@total]>500,"big",[@total]>100,"medium",TRUE,"small")' }
+        ],
+        on: {
+            cellChange: e => log('cellChange', e.detail.field, e.detail.value, e.detail.formula ? `formula ${e.detail.formula}` : ''),
+            formulaError: e => log('formulaError', e.detail.formula, e.detail.error)
+        }
+    });
+
+    const show = () => { document.querySelector('#result').textContent = String(grid.evaluate(document.querySelector('#formula').value)); };
+    document.querySelector('#evaluate').addEventListener('click', show);
+    document.querySelector('#tax').addEventListener('click', () => grid.setColumnFormula('tax', '=ROUND([@subtotal]*0.2,2)'));
+    document.querySelector('#override').addEventListener('click', () => grid.setCellFormula('1', 'price', '=[@qty]*2'));
+    document.querySelector('#xlsx').addEventListener('click', () => grid.exportXLSX());
+    show();
+    window.grid = grid;
+</script>
+</body>
+</html>

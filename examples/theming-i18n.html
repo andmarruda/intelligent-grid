@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Theming &amp; i18n · Intelligent Grid</title>
+    <link rel="stylesheet" href="../dist/intelligent-grid.css">
+    <link rel="stylesheet" href="./shared.css">
+</head>
+<body>
+<main>
+    <nav class="back"><a href="./index.html">← All examples</a></nav>
+    <header>
+        <h1>Theming &amp; i18n</h1>
+        <p>The same grid in pt-BR and en-US: number and date formats, typed input (<code>1.234,56</code> vs <code>1,234.56</code>), labels and the CSV delimiter follow the locale. The second grid overrides <code>--ig-*</code> CSS variables and some labels.</p>
+    </header>
+    <style>
+        .ig.brand {
+            --ig-accent: #7c3aed;
+            --ig-active: #7c3aed;
+            --ig-header-bg: #f3e8ff;
+            --ig-selected: #ede9fe;
+            --ig-hover: #faf5ff;
+            --ig-radius: 12px;
+            --ig-row-height: 40px;
+            --ig-font: Georgia, serif;
+        }
+        @media (prefers-color-scheme: dark) {
+            .ig.brand { --ig-header-bg: #2e1065; --ig-selected: #3b0764; --ig-hover: #1e1b4b; }
+        }
+    </style>
+    <div class="toolbar">
+        <button id="light">Force light theme on the pt-BR grid (class ig-light)</button>
+    </div>
+    <h2>pt-BR (default theme)</h2>
+    <div id="pt"></div>
+    <h2>en-US, custom theme and labels</h2>
+    <div id="en"></div>
+</main>
+<script src="../node_modules/sorla-db/dist/sorla.min.js"></script>
+<script type="module">
+    import { IntelligentGrid } from '../dist/index.js';
+    import { orders } from './data.js';
+
+    const columns = [
+        { field: 'id', title: '#', type: 'integer', width: 70 },
+        { field: 'product', title: 'Produto / Product' },
+        { field: 'qty', title: 'Qtd / Qty', type: 'integer', footer: 'sum' },
+        { field: 'price', title: 'Preço / Price', type: 'currency' },
+        { field: 'discount', title: 'Desc.', type: 'percent' },
+        { field: 'due', title: 'Vencimento / Due', type: 'date' },
+        { field: 'when', title: 'Mês / Month', formula: '=TEXT([@due],"mmmm yyyy")' }
+    ];
+    const data = orders(40);
+
+    const pt = new IntelligentGrid('#pt', {
+        locale: 'pt-BR', // currency defaults to BRL
+        idField: 'id', data, columns, height: 260, editable: true,
+        navbar: { title: 'Pedidos', export: ['csv', 'xlsx'], delete: true }
+    });
+
+    const en = new IntelligentGrid('#en', {
+        locale: 'en-US',
+        currency: 'USD',
+        idField: 'id', data, columns, height: 260, editable: true,
+        labels: { search: 'Find an order…', exportXlsx: 'Download .xlsx', noRows: 'Nothing here 🙂', status: '{shown} / {total} orders' },
+        navbar: { title: 'Orders', export: ['xlsx'] }
+    });
+    en.root.classList.add('brand');
+
+    document.querySelector('#light').addEventListener('click', () => pt.root.classList.toggle('ig-light'));
+    Object.assign(window, { pt, en });
+</script>
+</body>
+</html>

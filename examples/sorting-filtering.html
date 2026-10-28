@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Sorting &amp; filtering · Intelligent Grid</title>
+    <link rel="stylesheet" href="../dist/intelligent-grid.css">
+    <link rel="stylesheet" href="./shared.css">
+</head>
+<body>
+<main>
+    <nav class="back"><a href="./index.html">← All examples</a></nav>
+    <header>
+        <h1>Sorting &amp; filtering</h1>
+        <p>Click a header to sort, <b>Shift/Ctrl + click</b> to add more sort columns (numbers show the priority). Open ▾ for the Excel-style filter: value checklist plus two conditions joined by And/Or. The buttons below use the API.</p>
+    </header>
+    <div class="toolbar">
+        <button id="sort">Sort by city ▲ then total ▼</button>
+        <button id="cities">City = São Paulo or Recife</button>
+        <button id="range">Total between 50 and 150</button>
+        <button id="formula">Formula: total above average</button>
+        <button id="text">Product contains "co"</button>
+        <button id="clear">Clear everything</button>
+        <label><input type="checkbox" id="toggle"> Sort mode "toggle" (every click adds)</label>
+    </div>
+    <div id="grid"></div>
+    <pre class="log" id="log"></pre>
+</main>
+<script src="../node_modules/sorla-db/dist/sorla.min.js"></script>
+<script type="module">
+    import { IntelligentGrid } from '../dist/index.js';
+    import { orders, CITIES, logger } from './data.js';
+
+    const log = logger(document.querySelector('#log'));
+    const grid = new IntelligentGrid('#grid', {
+        locale: 'en-US',
+        idField: 'id',
+        data: orders(300),
+        height: 400,
+        navbar: { title: 'Orders', search: true, filters: true, columns: true, export: ['csv', 'xlsx'] },
+        initialSort: [{ field: 'due', dir: 'asc' }],
+        columns: [
+            { field: 'id', title: '#', type: 'integer', width: 70 },
+            { field: 'product', title: 'Product' },
+            { field: 'city', title: 'City', options: CITIES },
+            { field: 'qty', title: 'Qty', type: 'integer', width: 80 },
+            { field: 'price', title: 'Price', type: 'currency', currency: 'USD' },
+            { field: 'total', title: 'Total', type: 'currency', currency: 'USD', formula: '=[@qty]*[@price]' },
+            { field: 'due', title: 'Due', type: 'date' },
+            { field: 'paid', title: 'Paid', type: 'boolean', width: 80 }
+        ],
+        on: {
+            sortChange: e => log('sortChange', e.detail.sort),
+            filterChange: e => log('filterChange', e.detail.filters),
+            searchChange: e => log('searchChange', e.detail.search),
+            render: e => log('render', `${e.detail.rows} rows`)
+        }
+    });
+
+    const on = (id, fn) => document.querySelector(id).addEventListener('click', fn);
+    on('#sort', () => grid.setSort([{ field: 'city', dir: 'asc' }, { field: 'total', dir: 'desc' }]));
+    on('#cities', () => grid.setFilter('city', { values: ['São Paulo', 'Recife'] }));
+    on('#range', () => grid.setFilter('total', { conditions: [{ op: 'between', value: 50, value2: 150 }] }));
+    on('#formula', () => grid.setFilter('total', { formula: '=[@total] > AVERAGE([total])' }));
+    on('#text', () => grid.setFilter('product', { conditions: [{ op: 'contains', value: 'co' }] }));
+    on('#clear', () => { grid.clearFilters(); grid.setSort([]); });
+    document.querySelector('#toggle').addEventListener('change', e => { grid.options.sort.mode = e.target.checked ? 'toggle' : 'modifier'; });
+    window.grid = grid;
+</script>
+</body>
+</html>

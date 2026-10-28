@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Browser bundle (no modules) · Intelligent Grid</title>
+    <link rel="stylesheet" href="../dist/intelligent-grid.css">
+    <link rel="stylesheet" href="./shared.css">
+</head>
+<body>
+<main>
+    <nav class="back"><a href="./index.html">← All examples</a></nav>
+    <header>
+        <h1>Browser bundle (no modules)</h1>
+        <p>No bundler, no <code>type=module</code>: classic script tags. <code>dist/intelligent-grid.min.js</code> registers <code>window.IntelligentGrid</code> (the class, with every other export attached, e.g. <code>IntelligentGrid.toCSV</code>).</p>
+    </header>
+    <div id="grid"></div>
+</main>
+<script src="../node_modules/sorla-db/dist/sorla.min.js"></script>
+<script src="../dist/intelligent-grid.min.js"></script>
+<script>
+    var grid = new IntelligentGrid('#grid', {
+        locale: 'en-US',
+        height: 300,
+        editable: true,
+        data: [
+            { city: 'Ribeirão Preto', population: 720116, area: 650.9 },
+            { city: 'São Paulo', population: 11451999, area: 1521.2 },
+            { city: 'Curitiba', population: 1773718, area: 435 }
+        ],
+        columns: [
+            { field: 'city', title: 'City' },
+            { field: 'population', title: 'Population', type: 'integer', footer: 'sum' },
+            { field: 'area', title: 'Area (km²)', type: 'number', decimals: 1, footer: 'sum' },
+            { field: 'density', title: 'Density', type: 'number', decimals: 0, formula: '=[@population]/[@area]' }
+        ]
+    });
+    console.log('Functions available:', IntelligentGrid.listFunctions().length);
+</script>
+</body>
+</html>

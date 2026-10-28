@@ -1,0 +1,21 @@
+/* page chrome shared by the examples (the grid itself only needs dist/intelligent-grid.css) */
+:root { color-scheme: light dark; --page-bg: #f5f7fa; --page-fg: #1f2933; --page-muted: #616e7c; --card: #fff; --line: #d9e0e8; --link: #1a73e8; }
+@media (prefers-color-scheme: dark) { :root { --page-bg: #0d1117; --page-fg: #e6edf3; --page-muted: #8b98a5; --card: #161b22; --line: #30363d; --link: #58a6ff; } }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 24px 16px 48px; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--page-bg); color: var(--page-fg); }
+main { max-width: 1200px; margin: 0 auto; display: grid; gap: 20px; }
+a { color: var(--link); }
+h1 { margin: 0; font-size: 26px; }
+h2 { margin: 8px 0 0; font-size: 19px; }
+p { margin: 0; color: var(--page-muted); max-width: 820px; }
+nav.back { font-size: 14px; }
+code { font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; background: rgba(127,127,127,.15); padding: 1px 5px; border-radius: 4px; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.toolbar button, .toolbar select, .toolbar input { font: inherit; padding: 5px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: inherit; }
+.toolbar button { cursor: pointer; }
+.log { margin: 0; background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; max-height: 160px; overflow: auto; font: 12px/1.5 ui-monospace, Menlo, monospace; white-space: pre-wrap; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.card { display: block; padding: 16px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; text-decoration: none; color: inherit; }
+.card:hover { border-color: var(--link); }
+.card strong { display: block; margin-bottom: 4px; color: var(--link); }
+.card span { color: var(--page-muted); font-size: 14px; }

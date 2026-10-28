@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Change tracking · Intelligent Grid</title>
+    <link rel="stylesheet" href="../dist/intelligent-grid.css">
+    <link rel="stylesheet" href="./shared.css">
+    <style>
+        .columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; }
+        .log { max-height: 280px; }
+    </style>
+</head>
+<body>
+<main>
+    <nav class="back"><a href="./index.html">← All examples</a></nav>
+    <header>
+        <h1>Change tracking</h1>
+        <p>Edit cells, add rows and delete selected rows. Changed rows and cells are marked, and the grid keeps the net changes (inserted / updated / deleted) in a hidden form input. <b>Save</b> submits the form to a fake server that answers with database ids, then the grid accepts the changes. <b>Discard</b> restores the original data.</p>
+    </header>
+
+    <form id="save" method="post" action="/orders/batch">
+        <div class="toolbar">
+            <button type="submit">Save (submit form)</button>
+            <button type="button" id="reject">Discard all</button>
+            <button type="button" id="reject-selected">Discard selected rows</button>
+            <span id="summary"></span>
+        </div>
+        <div id="grid"></div>
+    </form>
+
+    <div class="columns">
+        <section>
+            <h2>getChanges(): what the form sends</h2>
+            <pre class="log" id="changes"></pre>
+        </section>
+        <section>
+            <h2>getHistory(): every operation</h2>
+            <pre class="log" id="history"></pre>
+        </section>
+    </div>
+    <section>
+        <h2>Server log</h2>
+        <pre class="log" id="server"></pre>
+    </section>
+</main>
+<script src="../node_modules/sorla-db/dist/sorla.min.js"></script>
+<script type="module">
+    import { IntelligentGrid } from '../dist/index.js';
+    import { orders, STATUS, logger } from './data.js';
+
+    const serverLog = logger(document.querySelector('#server'));
+    let nextDbId = 1000;
+
+    const grid = new IntelligentGrid('#grid', {
+        locale: 'en-US',
+        idField: 'id',
+        editable: true,
+        height: 340,
+        data: orders(30),
+        changeTracking: { form: '#save', inputName: 'changes' },
+        navbar: { title: 'Orders', add: () => ({ product: 'New item', qty: 1, price: 1, status: 'open' }), delete: true, export: false },
+        columns: [
+            { field: 'id', title: 'DB id', type: 'integer', width: 80, editable: false },
+            { field: 'product', title: 'Product', validate: { required: true } },
+            { field: 'qty', title: 'Qty', type: 'integer', width: 80, validate: { min: 1 } },
+            { field: 'price', title: 'Price', type: 'currency', currency: 'USD' },
+            { field: 'total', title: 'Total', type: 'currency', currency: 'USD', formula: '=[@qty]*[@price]', footer: 'sum' },
+            { field: 'paid', title: 'Paid', type: 'boolean', width: 80 },
+            { field: 'status', title: 'Status', options: STATUS }
+        ],
+        on: { changes: show, changesAccept: show, ready: show }
+    });
+
+    // event handlers get the grid on the event, which also works during "ready" (before `grid` is assigned)
+    function show(event) {
+        const g = event?.grid ?? grid;
+        document.querySelector('#changes').textContent = g.getChangesJSON(2);
+        document.querySelector('#history').textContent = g.getHistory()
+            .map(h => `#${h.seq} ${h.type.padEnd(6)} row ${h.id}${h.field ? ` ${h.field}: ${JSON.stringify(h.from)} → ${JSON.stringify(h.to)}` : ''} (${h.source})`)
+            .join('\n') || '(empty)';
+        const s = g.getChangeSummary();
+        document.querySelector('#summary').textContent = `${s.inserted} inserted · ${s.updated} updated · ${s.deleted} deleted`;
+    }
+
+    // stands in for the backend: applies the payload and returns ids for the inserted rows
+    async function fakeServer(body) {
+        await new Promise(resolve => setTimeout(resolve, 200));
+        const changes = JSON.parse(body.get('changes'));
+        serverLog(`INSERT ${changes.inserted.length}, UPDATE ${changes.updated.length}, DELETE ${changes.deleted.length}`);
+        changes.updated.forEach(u => serverLog(`  UPDATE orders SET ${Object.entries(u.changes).map(([f, c]) => `${f}=${JSON.stringify(c.to)}`).join(', ')} WHERE id=${u.row.id}`));
+        changes.deleted.forEach(d => serverLog(`  DELETE FROM orders WHERE id=${d.row.id}`));
+        return { inserted: changes.inserted.map(item => ({ id: item.id, dbId: nextDbId++ })) };
+    }
+
+    document.querySelector('#save').addEventListener('submit', async event => {
+        event.preventDefault();                       // a real page could let the browser submit
+        if (!grid.hasChanges()) return serverLog('nothing to save');
+        const result = await fakeServer(new FormData(event.target));
+        for (const { id, dbId } of result.inserted) grid.updateRow(id, { id: dbId });
+        grid.acceptChanges();
+        serverLog('saved, changes accepted');
+    });
+    document.querySelector('#reject').addEventListener('click', () => grid.rejectChanges());
+    document.querySelector('#reject-selected').addEventListener('click', () => grid.rejectChanges(grid.getSelectedIds()));
+    show();
+    window.grid = grid;
+</script>
+</body>
+</html>

@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Basic grid · Intelligent Grid</title>
+    <link rel="stylesheet" href="../dist/intelligent-grid.css">
+    <link rel="stylesheet" href="./shared.css">
+</head>
+<body>
+<main>
+    <nav class="back"><a href="./index.html">← All examples</a></nav>
+    <header>
+        <h1>Basic grid</h1>
+        <p>Columns with types, data and the default navbar (search, columns menu, CSV/Excel export). Click a header to sort.</p>
+    </header>
+    <div id="grid"></div>
+</main>
+<!-- SorlaDB browser bundle registers window.sorla, the grid finds it automatically -->
+<script src="../node_modules/sorla-db/dist/sorla.min.js"></script>
+<script type="module">
+    import { IntelligentGrid } from '../dist/index.js';
+    import { orders } from './data.js';
+
+    const grid = new IntelligentGrid('#grid', {
+        locale: 'en-US',
+        idField: 'id',
+        data: orders(100),
+        height: 420,
+        columns: [
+            { field: 'id', title: '#', type: 'integer', width: 70 },
+            { field: 'product', title: 'Product' },
+            { field: 'city', title: 'City' },
+            { field: 'qty', title: 'Qty', type: 'integer', width: 80 },
+            { field: 'price', title: 'Price', type: 'currency', currency: 'USD' },
+            { field: 'discount', title: 'Discount', type: 'percent', width: 100 },
+            { field: 'due', title: 'Due', type: 'date' },
+            { field: 'paid', title: 'Paid', type: 'boolean', width: 80 }
+        ]
+    });
+
+    window.grid = grid; // play with it in the console: grid.getRows('filtered')
+</script>
+</body>
+</html>
