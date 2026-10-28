@@ -23,14 +23,16 @@ import type { XlsxFooterCell } from '../export/xlsx.ts';
 import { createTranslator } from '../i18n/labels.ts';
 import { resolveEditor } from './editors.ts';
 import { openFilterMenu } from './filter-menu.ts';
+import { openConfirm } from './modal.ts';
 import { clear, h } from './dom.ts';
 import type {
-    AppendOptions, CellChangeDetail, ChangeSource, Column, ColumnDefinition, ConditionalFormat, CsvExportOptions, EditorInstance,
+    AppendOptions, CellChangeDetail, ChangeSource, Column, ConfirmRequest, ColumnDefinition, ConditionalFormat, CsvExportOptions, EditorInstance,
     ChangeTrackingOptions, Filter, FilterModel, GridEvent, GridEventHandler, GridOptions, NavbarItem, NavbarOptions, Row, RowData, SelectionMode,
     SelectionOptions, SortEntry, Translator, XlsxExportOptions
 } from '../types.ts';
 
-type ResolvedOptions = Required<Omit<GridOptions, 'selection' | 'navbar' | 'sort' | 'sorla' | 'database' | 'currency' | 'locale' | 'changeTracking'>> & {
+type ResolvedOptions = Required<Omit<GridOptions, 'selection' | 'navbar' | 'sort' | 'sorla' | 'database' | 'currency' | 'locale' | 'changeTracking' | 'confirm'>> & {
+    confirm?: GridOptions['confirm'];
     changeTracking: ChangeTrackingOptions | false;
     selection: SelectionOptions;
     navbar: NavbarOptions | false;
@@ -476,6 +478,18 @@ export class IntelligentGrid {
         const row = id === null ? null : this.store.get(id);
         const value = this.calc.evaluate(formula, row, row ? null : this._view);
         return isError(value) ? value.code : value;
+    }
+
+    /* ---------------------------------------------------------------- dialogs */
+
+    /**
+     * Asks the user to confirm, with the built-in modal or the `confirm` option.
+     * Also available for your own actions: `if (await grid.confirm({ action: 'archive', message: '…' })) …`
+     */
+    async confirm(request: ConfirmRequest): Promise<boolean> {
+        const custom = this.options.confirm;
+        if (typeof custom === 'function') return !!await custom(request);
+        return openConfirm(this.root, request, this.t);
     }
 
     /* ---------------------------------------------------------------- change tracking */
@@ -1355,9 +1369,15 @@ export class IntelligentGrid {
                 label: this.t('deleteRows'),
                 className: 'ig-btn-danger',
                 disabled: !this._selected.size,
-                onClick: () => {
+                onClick: async () => {
                     const ids = this.getSelectedIds();
-                    if (this.options.confirmDelete && !globalThis.confirm?.(this.t('confirmDelete', { count: ids.length }))) return;
+                    if (this.options.confirmDelete && !await this.confirm({
+                        action: 'delete',
+                        title: this.t('deleteTitle'),
+                        message: this.t('confirmDelete', { count: ids.length }),
+                        confirmLabel: this.t('deleteRows'),
+                        danger: true
+                    })) return;
                     this.deleteRows(ids);
                 }
             }));
@@ -1372,8 +1392,14 @@ export class IntelligentGrid {
                 }));
                 right.append(button({
                     label: this.t('discardChanges'),
-                    onClick: () => {
-                        if (this.options.confirmDelete && !globalThis.confirm?.(this.t('confirmDiscard', { count: summary.total }))) return;
+                    onClick: async () => {
+                        if (this.options.confirmDelete && !await this.confirm({
+                            action: 'discard',
+                            title: this.t('discardChanges'),
+                            message: this.t('confirmDiscard', { count: summary.total }),
+                            confirmLabel: this.t('discard'),
+                            danger: true
+                        })) return;
                         this.rejectChanges();
                     }
                 }));

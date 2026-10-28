@@ -199,6 +199,17 @@ export interface NavbarOptions {
     items?: NavbarItem[];
 }
 
+export interface ConfirmRequest {
+    /** What is being confirmed: 'delete', 'discard', or your own name when calling grid.confirm(). */
+    action: string;
+    title?: string;
+    message: string;
+    confirmLabel?: string;
+    cancelLabel?: string;
+    /** Destructive action: red confirm button, focus starts on cancel. */
+    danger?: boolean;
+}
+
 export interface ChangeTrackingOptions {
     /** Form that receives a hidden input with the changes as JSON, kept up to date. */
     form?: string | HTMLFormElement;
@@ -317,6 +328,8 @@ export interface GridOptions {
     rowFormats?: ConditionalFormat[];
     exportOptions?: { filename?: string; sheetName?: string };
     confirmDelete?: boolean;
+    /** Replace the built-in confirmation modal (e.g. with your UI library). Resolve true to proceed. */
+    confirm?: ((request: ConfirmRequest) => boolean | Promise<boolean>) | null;
     /** Track inserted/updated/deleted rows (default true). */
     changeTracking?: boolean | ChangeTrackingOptions;
     on?: Record<string, GridEventHandler>;
