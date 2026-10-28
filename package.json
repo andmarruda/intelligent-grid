@@ -1,0 +1,76 @@
+{
+  "name": "intelligent-grid",
+  "version": "0.1.0",
+  "description": "Excel-like data grid for the browser powered by SorlaDB: multi-column sorting, filters, infinite append mode, editing, selection, CSV/XLSX export and a formula engine.",
+  "type": "module",
+  "main": "dist/index.cjs",
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./styles.css": "./dist/intelligent-grid.css",
+    "./styles.min.css": "./dist/intelligent-grid.min.css",
+    "./browser": "./dist/intelligent-grid.min.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "src",
+    "styles"
+  ],
+  "scripts": {
+    "build": "node scripts/build.ts",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "test": "node --test \"test/**/*.test.ts\"",
+    "check": "npm run lint && npm run typecheck && npm test && npm run build",
+    "demo": "npm run build && node scripts/serve.ts",
+    "prepare": "husky",
+    "prepublishOnly": "npm run check"
+  },
+  "keywords": [
+    "grid",
+    "datagrid",
+    "spreadsheet",
+    "excel",
+    "formula",
+    "sorla",
+    "sorla-db",
+    "sysborg"
+  ],
+  "author": "Anderson Arruda <andmarruda@gmail.com>",
+  "license": "MIT",
+  "peerDependencies": {
+    "sorla-db": "^1.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@types/jsdom": "^21.1.7",
+    "@types/node": "^24.19.2",
+    "esbuild": "^0.25.12",
+    "eslint": "^9.39.5",
+    "globals": "^16.5.0",
+    "husky": "^9.1.7",
+    "jsdom": "^24.1.3",
+    "lint-staged": "^16.4.0",
+    "sorla-db": "^1.0.0",
+    "typescript": "5.9",
+    "typescript-eslint": "^8.72.1"
+  },
+  "module": "dist/index.js",
+  "types": "dist/types/index.d.ts",
+  "unpkg": "dist/intelligent-grid.min.js",
+  "jsdelivr": "dist/intelligent-grid.min.js",
+  "sideEffects": [
+    "*.css"
+  ],
+  "engines": {
+    "node": ">=22.18"
+  },
+  "lint-staged": {
+    "*.{ts,js}": "eslint --fix --max-warnings=0 --no-warn-ignored"
+  }
+}
