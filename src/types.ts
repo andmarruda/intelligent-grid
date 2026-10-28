@@ -194,7 +194,18 @@ export interface NavbarOptions {
     export?: boolean | Array<'csv' | 'xlsx'>;
     add?: boolean | ((grid: IntelligentGrid) => Record<string, unknown>);
     delete?: boolean;
+    /** "N changes" badge and a "Discard changes" button while there are unsaved changes (default true). */
+    changes?: boolean;
     items?: NavbarItem[];
+}
+
+export interface ChangeTrackingOptions {
+    /** Form that receives a hidden input with the changes as JSON, kept up to date. */
+    form?: string | HTMLFormElement;
+    /** Name of the hidden input (default 'changes'). */
+    inputName?: string;
+    /** Maximum history entries kept (default 5000). */
+    historyLimit?: number;
 }
 
 export type SelectionMode = 'single' | 'multiple' | 'none';
@@ -306,6 +317,8 @@ export interface GridOptions {
     rowFormats?: ConditionalFormat[];
     exportOptions?: { filename?: string; sheetName?: string };
     confirmDelete?: boolean;
+    /** Track inserted/updated/deleted rows (default true). */
+    changeTracking?: boolean | ChangeTrackingOptions;
     on?: Record<string, GridEventHandler>;
 }
 

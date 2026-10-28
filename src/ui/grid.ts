@@ -6,6 +6,8 @@
  */
 import { SorlaStore, compareCells } from '../core/store.ts';
 import { Emitter } from '../core/events.ts';
+import { ChangeTracker } from '../core/changes.ts';
+import type { ChangeReaders, ChangeSet, ChangeSummary, FieldChange, HistoryEntry } from '../core/changes.ts';
 import { compileFilters, isFilterActive } from '../core/filters.ts';
 import type { CompiledFilters } from '../core/filters.ts';
 import { NUMERIC_TYPES, editorText, excelFormatCode, formatCell, normalizeColumn, parseInput, validateValue } from '../core/columns.ts';
@@ -24,11 +26,12 @@ import { openFilterMenu } from './filter-menu.ts';
 import { clear, h } from './dom.ts';
 import type {
     AppendOptions, CellChangeDetail, ChangeSource, Column, ColumnDefinition, ConditionalFormat, CsvExportOptions, EditorInstance,
-    Filter, FilterModel, GridEvent, GridEventHandler, GridOptions, NavbarItem, NavbarOptions, Row, RowData, SelectionMode,
+    ChangeTrackingOptions, Filter, FilterModel, GridEvent, GridEventHandler, GridOptions, NavbarItem, NavbarOptions, Row, RowData, SelectionMode,
     SelectionOptions, SortEntry, Translator, XlsxExportOptions
 } from '../types.ts';
 
-type ResolvedOptions = Required<Omit<GridOptions, 'selection' | 'navbar' | 'sort' | 'sorla' | 'database' | 'currency' | 'locale'>> & {
+type ResolvedOptions = Required<Omit<GridOptions, 'selection' | 'navbar' | 'sort' | 'sorla' | 'database' | 'currency' | 'locale' | 'changeTracking'>> & {
+    changeTracking: ChangeTrackingOptions | false;
     selection: SelectionOptions;
     navbar: NavbarOptions | false;
     sort: { mode: 'modifier' | 'toggle' };
@@ -92,7 +95,8 @@ const DEFAULTS: ResolvedOptions = {
     initialSort: [],
     initialFilters: {},
     selection: { mode: 'multiple', checkbox: true },
-    navbar: { search: true, filters: true, columns: true, export: ['csv', 'xlsx'], add: false, delete: false, items: [] },
+    navbar: { search: true, filters: true, columns: true, export: ['csv', 'xlsx'], add: false, delete: false, changes: true, items: [] },
+    changeTracking: { inputName: 'changes', historyLimit: 5000 },
     statusBar: true,
     renderChunk: 100,
     append: null,
@@ -144,6 +148,8 @@ export class IntelligentGrid {
     private _observer: IntersectionObserver | null = null;
     private _onScroll: (() => void) | null = null;
     private _onDocumentPointer: ((e: PointerEvent) => void) | null = null;
+    private _tracker: ChangeTracker | null = null;
+    private _formInputs: HTMLInputElement[] = [];
 
     /**
      * @param string|HTMLElement target
@@ -160,7 +166,8 @@ export class IntelligentGrid {
             sort: { ...DEFAULTS.sort, ...options.sort },
             selection: options.selection === false ? { mode: 'none' } : { ...DEFAULTS.selection, ...options.selection } as SelectionOptions,
             navbar: options.navbar === false ? false : { ...DEFAULTS.navbar, ...options.navbar },
-            exportOptions: { ...DEFAULTS.exportOptions, ...options.exportOptions }
+            exportOptions: { ...DEFAULTS.exportOptions, ...options.exportOptions },
+            changeTracking: options.changeTracking === false ? false : { ...(DEFAULTS.changeTracking as ChangeTrackingOptions), ...(options.changeTracking === true ? {} : options.changeTracking) }
         };
         this.locale = this.options.locale ?? globalThis.navigator?.language ?? 'en-US';
         this.t = createTranslator(this.locale, this.options.labels);
@@ -171,6 +178,8 @@ export class IntelligentGrid {
 
         this.store = new SorlaStore({ sorla: options.sorla, idField: this.options.idField, database: options.database });
         this.calc = new CalcEngine({ store: this.store, locale: this.locale, names: this.options.names, functions: this.functions });
+        const tracking = this.options.changeTracking;
+        if (tracking) this._tracker = new ChangeTracker(tracking.historyLimit);
 
         this._sort = [...this.options.initialSort];
         this._filters = { ...this.options.initialFilters };
@@ -180,6 +189,7 @@ export class IntelligentGrid {
 
         this._setColumns(this.options.columns);
         this._build();
+        if (tracking && tracking.form) this.bindForm(tracking.form, tracking.inputName);
 
         if (this._append) {
             this.refresh();
@@ -304,8 +314,10 @@ export class IntelligentGrid {
         this.calc.cellFormulas.clear();
         this.calc.setColumns(this.columns);
         this._selected.clear();
+        this._tracker?.reset();
         this._insert(rows);
         this.refresh();
+        this._afterTrackedChange();
         this.emit('dataChange', { reason: 'setData' });
     }
 
@@ -326,20 +338,29 @@ export class IntelligentGrid {
         const event = this.emit('beforeRowAdd', { row: { ...row } });
         if (event.defaultPrevented) return null;
         const id = this._insert([event.detail.row])[0]!;
+        this._tracker?.recordInsert(id);
         const data = { ...this.store.get(id)! };
         if (position === 'start') this._view.unshift(data);
         else this._view.push(data);
         this._renderBody();
         this._renderFooter();
+        this._afterTrackedChange();
         this.emit('rowAdd', { id, row: this.getRow(id) });
         return id;
     }
 
     updateRow(id: string, patch: Record<string, unknown>): boolean {
         if (!this.store.has(id)) return false;
+        this._touch(id);
+        const before = this.getRow(id)!;
         const previous = this.store.update(id, patch);
         const scope = this.calc.recalculate([id], Object.keys(patch));
+        const after = this.getRow(id)!;
+        for (const field of Object.keys(patch)) {
+            if (field !== '_id') this._tracker?.recordUpdate(id, field, before[field] ?? null, after[field] ?? null, 'api');
+        }
         this._syncRows(scope === 'all' ? null : [id]);
+        this._afterTrackedChange();
         this.emit('rowChange', { id, row: this.getRow(id), previous });
         return true;
     }
@@ -347,6 +368,10 @@ export class IntelligentGrid {
     deleteRows(ids: string[]): string[] {
         const event = this.emit('beforeRowDelete', { ids: [...ids], rows: ids.map(id => this.getRow(id)) });
         if (event.defaultPrevented) return [];
+        for (const id of event.detail.ids) {
+            const data = this.store.get(id);
+            if (data) this._tracker?.recordDelete(id, data, this.calc.cellFormulas.get(id));
+        }
         const removed = this.store.remove(event.detail.ids);
         const removedIds = removed.map(r => r._id);
         this.calc.forgetRows(removedIds);
@@ -357,6 +382,7 @@ export class IntelligentGrid {
         this._rendered = Math.min(this._rendered, this._view.length);
         this._syncRows(null);
         if (removedIds.length) this.emit('selectionChange', this._selectionDetail());
+        this._afterTrackedChange();
         this.emit('rowDelete', { ids: removedIds, rows: removed.map(r => this._publicRow(r)) });
         return removedIds;
     }
@@ -392,6 +418,7 @@ export class IntelligentGrid {
         const event = this.emit('beforeCellChange', detail);
         if (event.defaultPrevented) return { ok: false, error: 'cancelled' };
 
+        this._touch(id);
         const hadFormula = !!this.calc.cellFormulas.get(id)?.[field];
         if (this.calc.columnFormulas.has(field)) this.calc.setCellOverride(id, field);
         else if (hadFormula) this.calc.setCellFormula(id, field, null);
@@ -401,6 +428,8 @@ export class IntelligentGrid {
         this._syncRows(scope === 'all' || hadFormula ? null : [id]);
 
         const updated = this.getRow(id)!;
+        this._tracker?.recordUpdate(id, field, oldValue ?? null, updated[field] ?? null, source);
+        this._afterTrackedChange();
         const change: CellChangeDetail = { id, field, value: updated[field], oldValue, row: updated, source };
         column.onChange?.(change);
         this.emit('cellChange', change);
@@ -414,11 +443,14 @@ export class IntelligentGrid {
         const event = this.emit<CellChangeDetail>('beforeCellChange', { id, field, value: formula, oldValue, row: this.getRow(id), column, source, formula: true });
         if (event.defaultPrevented) return { ok: false, error: 'cancelled' };
 
+        this._touch(id);
         this.calc.setCellFormula(id, field, formula);
         this.calc.recalculate([id], [field]);
         this._syncRows(null);
         const value = this.getRow(id)![field];
         if (isErrorCode(value)) this.emit('formulaError', { id, field, formula, error: value });
+        this._tracker?.recordUpdate(id, field, oldValue ?? null, value ?? null, source, formula);
+        this._afterTrackedChange();
         const change: CellChangeDetail = { id, field, value, oldValue, formula: formula ?? undefined, row: this.getRow(id), source };
         column.onChange?.(change);
         this.emit('cellChange', change);
@@ -444,6 +476,127 @@ export class IntelligentGrid {
         const row = id === null ? null : this.store.get(id);
         const value = this.calc.evaluate(formula, row, row ? null : this._view);
         return isError(value) ? value.code : value;
+    }
+
+    /* ---------------------------------------------------------------- change tracking */
+
+    private _readers: ChangeReaders = {
+        current: id => this.store.get(id),
+        publicRow: data => this._publicRow(data) ?? {},
+        formulas: id => this.calc.cellFormulas.get(id),
+        // calculated values are not user data, unless the user typed something into that cell
+        tracked: (id, field, original) => !this.calc.columnFormulas.has(field)
+            || this.calc.cellFormulas.get(id)?.[field] !== undefined
+            || original?.[field] !== undefined
+    };
+
+    private _touch(id: string): void {
+        this._tracker?.touch(id, this.store.get(id), this.calc.cellFormulas.get(id));
+    }
+
+    private _afterTrackedChange(): void {
+        if (!this._tracker) return;
+        const json = this._formInputs.length ? this.getChangesJSON() : '';
+        for (const input of this._formInputs) input.value = json;
+        this._renderNavbar();
+        this.emit('changes', { summary: this.getChangeSummary(), hasChanges: this.hasChanges() });
+    }
+
+    /**
+     * Net changes since the data was loaded or the last acceptChanges():
+     * { inserted: [{id, row}], updated: [{id, changes: {field: {from, to}}, row}], deleted: [{id, row}] }
+     */
+    getChanges(): ChangeSet {
+        if (!this._tracker) return { inserted: [], updated: [], deleted: [] };
+        return this._tracker.getChanges(this._readers);
+    }
+
+    getChangesJSON(space?: number): string {
+        return JSON.stringify(this.getChanges(), null, space);
+    }
+
+    getChangeSummary(): ChangeSummary {
+        if (!this._tracker) return { inserted: 0, updated: 0, deleted: 0, total: 0 };
+        return this._tracker.summary(this._readers);
+    }
+
+    hasChanges(): boolean {
+        return this.getChangeSummary().total > 0;
+    }
+
+    /** Every insert, update and delete since the last acceptChanges(), oldest first. */
+    getHistory(): HistoryEntry[] {
+        return this._tracker ? this._tracker.history.map(entry => ({ ...entry })) : [];
+    }
+
+    /**
+     * The current values become the new originals (call it after the server saved the changes).
+     * @param ids only these rows (e.g. the ones the server accepted); all when omitted
+     */
+    acceptChanges(ids?: string[]): void {
+        if (!this._tracker) return;
+        this._tracker.forget(ids ? new Set(ids) : null);
+        this._syncRows(null);
+        this._afterTrackedChange();
+        this.emit('changesAccept', { ids: ids ?? null });
+    }
+
+    /**
+     * Restores the original state: removes inserted rows, restores deleted ones and reverts updates.
+     * @param ids only these rows; all when omitted
+     */
+    rejectChanges(ids?: string[]): void {
+        if (!this._tracker) return;
+        this._closeEditor(false);
+        const scope = ids ? new Set(ids) : null;
+        const pending = this._tracker.pending(scope);
+
+        this.store.remove(pending.inserted);
+        this.calc.forgetRows(pending.inserted);
+        pending.inserted.forEach(id => this._selected.delete(id));
+
+        const restore = (id: string, formulas: Record<string, string> | undefined) => {
+            if (formulas && Object.keys(formulas).length) this.calc.cellFormulas.set(id, { ...formulas });
+            else this.calc.cellFormulas.delete(id);
+        };
+        for (const [id, snapshot] of pending.updated) {
+            const { _id, ...values } = snapshot.data;
+            const current = this.store.get(id);
+            if (!current) continue;
+            // fields added after the snapshot go back to blank
+            for (const field of Object.keys(current)) if (field !== '_id' && !(field in values)) values[field] = null;
+            this.store.update(id, values);
+            restore(id, snapshot.formulas);
+        }
+        for (const [id, snapshot] of pending.deleted) {
+            this.store.insert([{ ...snapshot.data }]);
+            restore(id, snapshot.formulas);
+        }
+
+        this._tracker.forget(scope);
+        this.calc.setColumns(this.columns);
+        this.calc.recalculateAll();
+        this.refresh();
+        this._afterTrackedChange();
+        this.emit('changesReject', { ids: ids ?? null });
+    }
+
+    /**
+     * Keeps a hidden input with getChangesJSON() inside a form, updated on every change,
+     * so a normal form submit sends the changes.
+     * @return the hidden input
+     */
+    bindForm(form: string | HTMLFormElement, name = 'changes'): HTMLInputElement {
+        const element = typeof form === 'string' ? document.querySelector<HTMLFormElement>(form) : form;
+        if (!element) throw new Error('Intelligent Grid: form not found');
+        let input = element.querySelector<HTMLInputElement>(`input[type="hidden"][name="${CSS.escape(name)}"]`);
+        if (!input) {
+            input = h('input', { type: 'hidden', name });
+            element.append(input);
+        }
+        input.value = this.getChangesJSON();
+        if (!this._formInputs.includes(input)) this._formInputs.push(input);
+        return input;
     }
 
     /* ---------------------------------------------------------------- sort, filters, search */
@@ -574,6 +727,9 @@ export class IntelligentGrid {
         append.loaded = 0;
         append.hasMore = true;
         append.loading = false;
+        // reloading from the server replaces the rows, unsaved changes cannot survive it
+        if (this.hasChanges()) this.emit('changesDiscarded', { changes: this.getChanges() });
+        this._tracker?.reset();
         this.store.clear();
         this.calc.cellFormulas.clear();
         this.calc.setColumns(this.columns);
@@ -1008,16 +1164,19 @@ export class IntelligentGrid {
         this._rendered = end;
     }
 
-    private _rowClasses(row: RowData): string[] {
+    private _rowClasses(row: RowData, changed: Record<string, FieldChange>): string[] {
         const classes = ['ig-row'];
         if (this._selected.has(row._id)) classes.push('ig-selected');
+        if (this._tracker?.isInserted(row._id)) classes.push('ig-row-inserted');
+        else if (Object.keys(changed).length) classes.push('ig-row-updated');
         if (typeof this.options.rowClass === 'function') classes.push(this.options.rowClass(this._publicRow(row)) ?? '');
         return classes;
     }
 
     private _createRow(row: RowData): HTMLTableRowElement {
         const tr = h('tr', { dataset: { id: row._id }, 'aria-selected': String(this._selected.has(row._id)) });
-        tr.className = this._rowClasses(row).join(' ').trim();
+        const changed = this._tracker ? this._tracker.changedFields(row._id, this._readers) : {};
+        tr.className = this._rowClasses(row, changed).join(' ').trim();
         this._applyFormats(tr, this.options.rowFormats, row);
 
         if (this.selectionMode !== 'none' && this.options.selection.checkbox) {
@@ -1028,7 +1187,7 @@ export class IntelligentGrid {
                 'aria-label': 'select'
             })));
         }
-        for (const column of this.visibleColumns) tr.append(this._createCell(row, column));
+        for (const column of this.visibleColumns) tr.append(this._createCell(row, column, changed[column.field]));
         return tr;
     }
 
@@ -1038,7 +1197,7 @@ export class IntelligentGrid {
         return !!column.editable;
     }
 
-    private _createCell(row: RowData, column: Column): HTMLTableCellElement {
+    private _createCell(row: RowData, column: Column, change?: FieldChange): HTMLTableCellElement {
         const value = row[column.field];
         const td = h('td', { dataset: { field: column.field }, role: 'gridcell' });
         const classes = ['ig-cell', `ig-align-${column.align}`, `ig-type-${column.type}`];
@@ -1048,6 +1207,7 @@ export class IntelligentGrid {
         if (formula) classes.push('ig-formula');
         if (isErrorCode(value)) classes.push('ig-error');
         if (invalid) classes.push('ig-invalid');
+        if (change) classes.push('ig-cell-changed');
         if (!this._isEditable(column, row)) classes.push('ig-readonly');
         if (NUMERIC_TYPES.has(column.type) && typeof value === 'number' && value < 0) classes.push('ig-negative');
         if (this._active && this._active.id === row._id && this._active.field === column.field) classes.push('ig-active');
@@ -1056,6 +1216,7 @@ export class IntelligentGrid {
         td.className = classes.join(' ').trim();
         if (invalid) td.title = invalid;
         else if (formula) td.title = formula;
+        else if (change) td.title = this.t('was', { value: change.from === null || change.from === '' ? this.t('blanks') : String(change.from) });
 
         const formatted = formatCell(value, column, row, this.locale);
         if (typeof column.render === 'function') {
@@ -1200,6 +1361,23 @@ export class IntelligentGrid {
                     this.deleteRows(ids);
                 }
             }));
+        }
+        if (config.changes && this._tracker) {
+            const summary = this.getChangeSummary();
+            if (summary.total) {
+                right.append(h('span', {
+                    class: 'ig-changes-badge',
+                    title: this.t('changesDetail', summary as unknown as Record<string, unknown>),
+                    text: this.t('changesCount', { count: summary.total })
+                }));
+                right.append(button({
+                    label: this.t('discardChanges'),
+                    onClick: () => {
+                        if (this.options.confirmDelete && !globalThis.confirm?.(this.t('confirmDiscard', { count: summary.total }))) return;
+                        this.rejectChanges();
+                    }
+                }));
+            }
         }
         if (config.columns) {
             right.append(h('button', {

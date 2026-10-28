@@ -16,6 +16,9 @@
     --ig-error-bg: #fdecea;
     --ig-formula: #0b7a3e;
     --ig-negative: #c62828;
+    --ig-inserted: #2e7d32;
+    --ig-updated: #ed8b00;
+    --ig-changed-bg: rgba(237, 139, 0, .12);
     --ig-radius: 6px;
     --ig-row-height: 34px;
     --ig-shadow: 0 8px 24px rgba(15, 23, 42, .16);
@@ -43,6 +46,9 @@
         --ig-error-bg: #3b1d1d;
         --ig-formula: #56d364;
         --ig-negative: #ff7b72;
+        --ig-inserted: #56d364;
+        --ig-updated: #f0b72f;
+        --ig-changed-bg: rgba(240, 183, 47, .14);
         --ig-shadow: 0 8px 24px rgba(0, 0, 0, .5);
     }
 }
@@ -154,6 +160,10 @@
 .ig-cell.ig-error { background: var(--ig-error-bg) !important; color: var(--ig-danger); }
 .ig-cell.ig-invalid { box-shadow: inset 0 0 0 2px var(--ig-danger); }
 .ig-cell.ig-editing { padding: 0; overflow: visible; }
+.ig-row-inserted > td:first-child { box-shadow: inset 3px 0 0 var(--ig-inserted); }
+.ig-row-updated > td:first-child { box-shadow: inset 3px 0 0 var(--ig-updated); }
+.ig-cell.ig-cell-changed { background-image: linear-gradient(var(--ig-changed-bg), var(--ig-changed-bg)); }
+.ig-changes-badge { font-size: 12px; font-weight: 600; color: var(--ig-updated); padding: 0 4px; }
 .ig-editor { width: 100%; height: 100%; min-height: var(--ig-row-height); border-radius: 0; border-color: var(--ig-active); }
 .ig-editor-textarea { position: relative; z-index: 4; min-height: 80px; resize: vertical; }
 .ig-editor-checkbox { width: auto; min-height: 0; }

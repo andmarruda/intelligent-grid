@@ -1,6 +1,8 @@
 export { IntelligentGrid, IntelligentGrid as default } from './ui/grid.ts';
 export type { DistinctValue, SetCellResult } from './ui/grid.ts';
 export { SorlaStore, compareCells } from './core/store.ts';
+export { ChangeTracker } from './core/changes.ts';
+export type { ChangeSet, ChangeSummary, DeletedRow, FieldChange, HistoryEntry, InsertedRow, UpdatedRow } from './core/changes.ts';
 export { compileFilters, operatorsFor } from './core/filters.ts';
 export { TYPES, formatCell, parseInput, validateValue, excelFormatCode } from './core/columns.ts';
 export { CalcEngine } from './formula/engine.ts';
