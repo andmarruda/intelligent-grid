@@ -1,0 +1,2 @@
+# the test suite must pass before anything reaches GitHub
+npm test
