@@ -8,7 +8,7 @@ Excel-like data grid for the browser, written in TypeScript and powered by
 - **Large data**: row and column virtualization (100 000 rows scroll at 60 fps), pinned (frozen) columns, wrapped text; see the [benchmarks](docs/benchmarks.md)
 - **Spreadsheet editing**: cell ranges (drag, Shift+arrows), copy / paste / clear blocks, fill handle with series, undo / redo, find / replace / go to, cell comments, remove duplicates
 - **Grouping** with collapsible group rows and subtotals
-- **Append mode**: infinite scroll loading pages from your API
+- **Server data**: infinite scroll over `fetch` or a WebSocket (with rows pushed by the server), and Server-Sent Events loading 100 000 rows in blocks
 - **Editing** with typed editors, locale-aware parsing, validation, cancelable events, custom editors, copy/paste
 - **Selection**: single or multiple rows, checkboxes, bulk actions
 - **Change tracking**: inserted, updated and deleted rows plus a full history, ready to send as JSON with a form
@@ -21,7 +21,7 @@ values are stored in the documents, so they sort and filter like any other field
 ## Quick start
 
 ```bash
-npm install intelligent-grid sorla-db   # sorla-db 1.5+
+npm install intelligent-grid sorla-db   # sorla-db 1.7.1+
 ```
 
 ```html
@@ -72,7 +72,8 @@ The full documentation is in [`docs/`](docs/README.md).
 - [Import](docs/import.md): CSV, TSV and XLSX files
 - [Virtualization](docs/virtualization.md): large data, pinned columns, wrapped text
 - [Navbar & status bar](docs/navbar.md): built-in buttons, filter chips, custom items
-- [Append mode](docs/append-mode.md): infinite scroll from an API
+- [Append mode](docs/append-mode.md): infinite scroll from an API, over fetch or a WebSocket
+- [Server data](docs/server-data.md): SSE loading in blocks, rows pushed by the server
 - [Export](docs/export.md): CSV and XLSX
 - [Change tracking](docs/change-tracking.md): inserted/updated/deleted rows, history, JSON for forms, accept/reject
 
@@ -93,7 +94,7 @@ The full documentation is in [`docs/`](docs/README.md).
 ### Project
 
 - [Architecture](docs/architecture.md): module layout and how the grid uses SorlaDB
-- [SorlaDB status](docs/sorla-db.md): issues fixed upstream (1.1–1.5) and open items
+- [SorlaDB status](docs/sorla-db.md): issues fixed upstream (1.1–1.7.1) and open items
 - [Development](docs/development.md): scripts, build, lint, husky hooks, tests, releasing
 - [Benchmarks](docs/benchmarks.md): 10 000 to 1 000 000 rows, bundle size
 
@@ -109,6 +110,9 @@ The full documentation is in [`docs/`](docs/README.md).
 | [spreadsheet.html](examples/spreadsheet.html) | Ranges, fill handle, undo, find / replace, grouping, data bars, sparklines, comments, import, 100 000 rows |
 | [editing.html](examples/editing.html) | Editors, validation, cancelable events, a custom editor, paste |
 | [formulas.html](examples/formulas.html) | Calculated columns, cell formulas, footers, conditional formats, custom functions |
+| [fetch-pages.html](examples/fetch-pages.html) | Pages over HTTP from the demo backend, filters sent as `find()` JSON |
+| [websocket.html](examples/websocket.html) | Infinite scroll over a WebSocket, rows changed by another user pushed in place |
+| [sse-stream.html](examples/sse-stream.html) | 100 000 rows over Server-Sent Events in blocks of 5 000 |
 | [infinite-scroll.html](examples/infinite-scroll.html) | Append mode with a fake paginated API |
 | [change-tracking.html](examples/change-tracking.html) | Inserted/updated/deleted rows, history, saving with a form, accept/discard |
 | [selection-export.html](examples/selection-export.html) | Single/multiple selection, bulk actions, CSV and XLSX |

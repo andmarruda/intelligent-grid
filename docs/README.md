@@ -20,7 +20,8 @@ to the Sorla query language, and a formula engine adds Excel calculations on top
 | [Import](import.md) | CSV, TSV and XLSX files into the grid |
 | [Virtualization](virtualization.md) | Large data, pinned (frozen) columns, wrapped text, row height |
 | [Navbar & status bar](navbar.md) | Built-in buttons, filter chips, custom items |
-| [Append mode (infinite scroll)](append-mode.md) | Loading pages from an API, server-side vs local queries |
+| [Append mode (infinite scroll)](append-mode.md) | Loading pages from an API over fetch or a WebSocket, server-side vs local queries |
+| [Server data](server-data.md) | Server-Sent Events loading in blocks, rows pushed by the server |
 | [Export](export.md) | CSV and XLSX, options, formulas in Excel |
 | [Change tracking](change-tracking.md) | Inserted/updated/deleted rows, history, JSON for forms, accept/reject |
 | [Formulas](formulas.md) | Formula language, calculated columns, cell formulas, footers, conditional formats (data bars, color scales, icon sets), sparklines, custom functions |

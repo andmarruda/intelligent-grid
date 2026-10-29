@@ -23,12 +23,13 @@ footer sum) and a `share` column (`=[@total]/SUM([total])`) that depends on ever
 
 | rows | open | filter | text filter | clear | sort | edit + recalc | scroll avg / p95 frame | DOM rows | JS heap |
 |---|---|---|---|---|---|---|---|---|---|
-| 10,000 | 118 ms | 27 ms | 33 ms | 33 ms | 52 ms | 31 ms | 16.7 / 17 ms | 27 | 11 MB |
-| 100,000 | 802 ms | 151 ms | 100 ms | 233 ms | 538 ms | 262 ms | 16.7 / 17.7 ms | 27 | 169 MB |
+| 10,000 | 85 ms | 33 ms | 33 ms | 33 ms | 34 ms | 33 ms | 16.7 / 17 ms | 27 | 10 MB |
+| 100,000 | 447 ms | 58 ms | 49 ms | 33 ms | 250 ms | 200 ms | 16.7 / 16.9 ms | 27 | 96 MB |
 | 1,000,000 ¹ | 10.4 s | 1.4 s | — | — | 7.3 s | 3.7 s | 18.3 / 27 ms | 27 | 1.6 GB |
 
-¹ Measured once, before range selection, grouping and the other spreadsheet features were added;
-the 10k and 100k numbers did not change with them. Run `npm run bench -- 1000000` to measure again.
+¹ Measured once, with sorla-db 1.5 (find() copied every match). The 10k and 100k rows above use
+sorla-db 1.7.1, where filtering reads ids without copies: 100 000 rows open in less than half the
+time and with 43% less memory. Run `npm run bench -- 1000000` to measure again.
 
 A 16.7 ms frame is 60 fps: up to 100 000 rows scrolling never drops a frame.
 
@@ -38,24 +39,25 @@ The same scenario, before the work on large grids:
 
 | rows | step | before | after | |
 |---|---|---|---|---|
-| 10,000 | open | 2 519 ms | 118 ms | 21× |
-| 10,000 | edit + recalc | 889 ms | 31 ms | 29× |
-| 100,000 | open | 237 892 ms | 802 ms | 297× |
-| 100,000 | edit + recalc | 84 477 ms | 262 ms | 322× |
+| 10,000 | open | 2 519 ms | 85 ms | 30× |
+| 10,000 | edit + recalc | 889 ms | 33 ms | 27× |
+| 100,000 | open | 237 892 ms | 447 ms | 532× |
+| 100,000 | edit + recalc | 84 477 ms | 200 ms | 422× |
 
 Three changes made the difference:
 
 1. **Formula memoization.** `SUM([total])` inside a per-row formula was computed again for each row,
    so a column with it was quadratic. Sub-expressions that do not depend on the row are now computed
    once per calculation pass (volatile functions like `RAND()` excepted).
-2. **SorlaDB inserts.** `insertMany` re-read the collection for every document; fixed upstream,
-   to be released as sorla-db 1.5.1 (see [SorlaDB status](sorla-db.md)).
+2. **SorlaDB inserts and reads.** `insertMany` re-read the collection for every document (fixed in
+   sorla-db 1.5.1), and `find()` copied every match (1.6.0 copies only what is read; the grid reads
+   only ids). See [SorlaDB status](sorla-db.md).
 3. **Virtualization.** Only the rows in view are rendered, see [Virtualization](virtualization.md).
 
 ## Where the time goes at 1 000 000 rows
 
-Most of the remaining time is in SorlaDB's `find()`, which copies every matching document (open
-item 3 in [SorlaDB status](sorla-db.md)), and in sorting with the Excel comparator. Memory follows
+These numbers are from sorla-db 1.5, when `find()` still copied every matching document; with 1.7.1
+most of that time and memory is gone. Sorting with the Excel comparator remains the largest part. Memory follows
 the same copies. Up to a few hundred thousand rows the grid stays interactive; beyond that, use
 [append mode](append-mode.md) with the server doing the filtering.
 

@@ -169,10 +169,12 @@ See [Import](import.md).
 
 See [Export](export.md) for the options.
 
-## Append mode
+## Append mode and server data
 
 | Method | Description |
 |---|---|
+| `applyServerChanges({ rows?, ids?, type? }, { refresh? })` | Rows and deletions from the server: not unsaved changes, not undoable, see [Server data](server-data.md) |
+| `loadStream(url, options?)` | Rows from a Server-Sent Events endpoint in blocks; returns `{ done, state, close() }` |
 | `loadMore()` | `Promise<void>`: next page (no-op while loading or when `hasMore` is false) |
 | `reload()` | Clear and load from offset 0 (`refresh()` without append) |
 

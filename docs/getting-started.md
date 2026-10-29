@@ -6,7 +6,7 @@
 npm install intelligent-grid sorla-db
 ```
 
-`sorla-db` (1.5 or newer) is a peer dependency: the grid stores its rows in SorlaDB, and you provide the library.
+`sorla-db` (1.7.1 or newer) is a peer dependency: the grid stores its rows in SorlaDB, and you provide the library.
 
 ## Load SorlaDB
 

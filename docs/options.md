@@ -37,7 +37,7 @@ new IntelligentGrid(target: string | HTMLElement, options: GridOptions)
 | `groupsCollapsed` | `boolean` | `false` | Groups start collapsed |
 | `comments` | `CellComment[]` | `[]` | [Cell comments](spreadsheet.md#comments) on load |
 | `renderChunk` | `number` | | Ignored (rows are virtualized) |
-| `append` | `AppendOptions \| null` | `null` | Infinite scroll loader, see [Append mode](append-mode.md) |
+| `append` | `AppendOptions \| null` | `null` | Infinite scroll: `{ load }` or `{ socket }`, see [Append mode](append-mode.md) |
 | `rowClass` | `(row) => string` | | Extra class per row |
 | `rowFormats` | `ConditionalFormat[]` | `[]` | [Conditional formats](formulas.md#conditional-formats) for whole rows |
 | `exportOptions` | `{ filename, sheetName }` | `{ filename: 'export', sheetName: 'Sheet1' }` | Export defaults |

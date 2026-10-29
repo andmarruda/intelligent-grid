@@ -64,7 +64,7 @@ Edits go the other way: editor → `parseInput` → `validateValue` → hooks/ev
   (`$eq $ne $gt $gte $lt $lte $in $nin`, nested `$and / $or / $nor`), combined with `$and`.
   Text matching uses case-insensitive `$regex`. Every subtree SorlaDB can express runs as one
   `collection.find()`; only formulas, `test` functions, the global search (it matches the displayed
-  text) and "≠ a day" on datetime columns run as predicates. Requires sorla-db 1.5+.
+  text) and "≠ a day" on datetime columns run as predicates. Requires sorla-db 1.7.1+.
 - **Calculated values** are stored in the documents, so `find()` can filter on them.
 - **Inserts and deletes** use `insertMany` / `deleteMany`. Updates and sorting still go around the API, for
   performance and Excel's sort order; see [SorlaDB status](sorla-db.md#open-items).

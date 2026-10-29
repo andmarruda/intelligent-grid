@@ -104,6 +104,9 @@ See [Change tracking](change-tracking.md).
 | `loadEnd` | same plus `{ rows, hasMore, total }` |
 | `loadError` | same plus `{ error }` |
 | `scrollEnd` | `{}`: scrolled to the end with nothing left to load |
+| `serverChange` | `{ inserted, updated, removed }`: from `applyServerChanges`, WebSocket pushes and SSE blocks |
+| `streamEnd` | the final stream state `{ loaded, total, blocks, errors, ... }` |
+| `streamError` | `{ error }` |
 
 ## Column hooks vs events
 
