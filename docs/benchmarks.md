@@ -1,0 +1,83 @@
+# Benchmarks
+
+Measured in headless Chromium (Playwright) with `npm run bench`, on a laptop (Intel Core i9-13980HX,
+4 cores and 8 GB of RAM given to a WSL2 virtual machine), viewport 1280 × 800.
+
+## Scenario
+
+[`bench/index.html`](../bench/index.html) builds a grid with 12 columns: text, a select, integer,
+currency, percent, date and boolean values, a calculated `total` (`=[@qty]*[@price]*(1-[@discount])`,
+footer sum) and a `share` column (`=[@total]/SUM([total])`) that depends on every row. Then it times:
+
+| Step | What it does |
+|---|---|
+| open | `new IntelligentGrid()` with the rows, until the first render |
+| filter | number filter `qty > 25` |
+| text filter | `name contains "7"` on top of it (a case-insensitive `$regex` in SorlaDB) |
+| clear | remove both filters |
+| sort | two columns: `city` ascending, `total` descending |
+| edit + recalc | one `setCellValue` on `qty`, which recalculates `total`, `SUM([total])` and every `share` |
+| scroll | from the top to the bottom in steps; average and 95th percentile frame time |
+
+## Results
+
+| rows | open | filter | text filter | clear | sort | edit + recalc | scroll avg / p95 frame | DOM rows | JS heap |
+|---|---|---|---|---|---|---|---|---|---|
+| 10,000 | 118 ms | 27 ms | 33 ms | 33 ms | 52 ms | 31 ms | 16.7 / 17 ms | 27 | 11 MB |
+| 100,000 | 802 ms | 151 ms | 100 ms | 233 ms | 538 ms | 262 ms | 16.7 / 17.7 ms | 27 | 169 MB |
+| 1,000,000 ¹ | 10.4 s | 1.4 s | — | — | 7.3 s | 3.7 s | 18.3 / 27 ms | 27 | 1.6 GB |
+
+¹ Measured once, before range selection, grouping and the other spreadsheet features were added;
+the 10k and 100k numbers did not change with them. Run `npm run bench -- 1000000` to measure again.
+
+A 16.7 ms frame is 60 fps: up to 100 000 rows scrolling never drops a frame.
+
+## Before and after
+
+The same scenario, before the work on large grids:
+
+| rows | step | before | after | |
+|---|---|---|---|---|
+| 10,000 | open | 2 519 ms | 118 ms | 21× |
+| 10,000 | edit + recalc | 889 ms | 31 ms | 29× |
+| 100,000 | open | 237 892 ms | 802 ms | 297× |
+| 100,000 | edit + recalc | 84 477 ms | 262 ms | 322× |
+
+Three changes made the difference:
+
+1. **Formula memoization.** `SUM([total])` inside a per-row formula was computed again for each row,
+   so a column with it was quadratic. Sub-expressions that do not depend on the row are now computed
+   once per calculation pass (volatile functions like `RAND()` excepted).
+2. **SorlaDB inserts.** `insertMany` re-read the collection for every document; fixed upstream,
+   to be released as sorla-db 1.5.1 (see [SorlaDB status](sorla-db.md)).
+3. **Virtualization.** Only the rows in view are rendered, see [Virtualization](virtualization.md).
+
+## Where the time goes at 1 000 000 rows
+
+Most of the remaining time is in SorlaDB's `find()`, which copies every matching document (open
+item 3 in [SorlaDB status](sorla-db.md)), and in sorting with the Excel comparator. Memory follows
+the same copies. Up to a few hundred thousand rows the grid stays interactive; beyond that, use
+[append mode](append-mode.md) with the server doing the filtering.
+
+## Bundle size
+
+`npm run build` prints the size of the browser bundle and fails when it is over its budget:
+
+| File | Minified | gzip | Budget (gzip) |
+|---|---|---|---|
+| `intelligent-grid.min.js` | 169 kB | 55 kB | 64 kB |
+| `intelligent-grid.min.css` | 14 kB | 3.6 kB | 5 kB |
+
+Everything is included: formula engine with 137 functions, XLSX export and import, query builder,
+grouping, find / replace and the rest. The optional parts together (XLSX read / write, query
+builder, find bar, sparklines) are about 7 kB gzip, too little to be worth splitting into
+separately loaded files. SorlaDB itself is a separate 37 kB file.
+
+## Run it yourself
+
+```bash
+npm run bench                 # 10k and 100k rows
+npm run bench -- 1000000      # any sizes
+```
+
+Numbers depend on the machine; compare runs on the same one.

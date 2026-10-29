@@ -62,11 +62,12 @@ Edits go the other way: editor → `parseInput` → `validateValue` → hooks/ev
 - **Storage**: every row is a document of collection `rows` in a database per grid. `_id` is the row id.
 - **Queries**: column filters and the advanced filter compile to the Sorla query language
   (`$eq $ne $gt $gte $lt $lte $in $nin`, nested `$and / $or / $nor`), combined with `$and`.
-  Every subtree SorlaDB can express runs as one `collection.find()`; only text matching (no `$regex`
-  in SorlaDB yet), formulas and search run as predicates. Nested queries need sorla-db 1.1+.
+  Text matching uses case-insensitive `$regex`. Every subtree SorlaDB can express runs as one
+  `collection.find()`; only formulas, `test` functions, the global search (it matches the displayed
+  text) and "≠ a day" on datetime columns run as predicates. Requires sorla-db 1.5+.
 - **Calculated values** are stored in the documents, so `find()` can filter on them.
-- **Workarounds** for missing or broken SorlaDB 1.0 features (update, delete, sort, null values…)
-  are isolated in `store.ts`, each one marked `SorlaDB 1.0 workaround`. See [SorlaDB improvements](sorla-db.md).
+- **Inserts and deletes** use `insertMany` / `deleteMany`. Updates and sorting still go around the API, for
+  performance and Excel's sort order; see [SorlaDB status](sorla-db.md#open-items).
 
 ## Formula engine
 

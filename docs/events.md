@@ -41,11 +41,15 @@ not stop the other handlers.
 | `cellEditStart` | `{ id, field, value, row, column }` |
 | `cellEditCancel` | `{ id, field }`: Esc pressed |
 | `beforeCellChange` ✋ | `{ id, field, value, oldValue, row, column, source, formula? }`: rewrite `detail.value` to store something else |
-| `cellChange` | `{ id, field, value, oldValue, row, source, formula? }`: `source` is `'edit'`, `'paste'` or `'api'` |
+| `cellChange` | `{ id, field, value, oldValue, row, source, formula? }`: `source` is `'edit'`, `'paste'`, `'fill'` or `'api'` |
 | `validationError` | `{ id, field, value, error, message }`: `error` is the rule key (`'min:0'`), `message` the translated text |
 | `formulaError` | `{ id, field, formula, error }`: a cell formula produced an error |
 | `copy` | `{ text }` |
 | `paste` | `{ text, results: [{ id, field, ok, error? }] }` |
+| `fill` | `{ direction, count, written, range }`: the [fill handle](spreadsheet.md#fill-handle) or `fill()` |
+| `replace` | `{ text, replacement, replaced }` |
+| `undo` / `redo` | `{ label, changes }` |
+| `commentChange` | `{ id, field, text, oldText }` |
 
 ## Rows
 
@@ -53,6 +57,7 @@ not stop the other handlers.
 |---|---|
 | `beforeRowAdd` ✋ | `{ row }`: modify `detail.row` to change the inserted values |
 | `rowAdd` | `{ id, row }` |
+| `rowsAdd` | `{ ids }`: from `addRows()` and append imports (no `beforeRowAdd` per row) |
 | `rowChange` | `{ id, row, previous }`: from `updateRow()` |
 | `beforeRowDelete` ✋ | `{ ids, rows }`: modify `detail.ids` to delete fewer rows (runs after the navbar confirmation) |
 | `rowDelete` | `{ ids, rows }` |
@@ -64,6 +69,7 @@ not stop the other handlers.
 | `rowClick` / `rowDblClick` | `{ id, row, event }` |
 | `cellClick` | `{ id, field, value, row, event }` |
 | `activeCellChange` | `{ id, field }` |
+| `rangeChange` | `{ from, to, rows, fields }` or `null`: the [cell range](spreadsheet.md#ranges) |
 | `selectionChange` | `{ ids, rows }` |
 | `sortChange` | `{ sort }` |
 | `filterChange` | `{ field, filter, filters }` (`field` is null after `setFilters`) |
@@ -72,6 +78,9 @@ not stop the other handlers.
 | `queryBuilderOpen` / `queryBuilderClose` | `{}` |
 | `columnResize` | `{ field, width }` |
 | `columnVisibilityChange` | `{ field, visible }` |
+| `columnPin` | `{ field, side }` |
+| `groupChange` | `{ groupBy }` |
+| `groupToggle` | `{ key, collapsed }` |
 
 ## Change tracking
 
@@ -89,6 +98,8 @@ See [Change tracking](change-tracking.md).
 |---|---|
 | `beforeExport` ✋ | `{ format: 'csv' \| 'xlsx', options }`: options are writable |
 | `export` | `{ format, options }` |
+| `import` | `{ rows, fields, skipped, errors, sheet? }`, see [Import](import.md) |
+| `importError` | `{ error }`: the navbar import could not read the file |
 | `loadStart` | `{ offset, limit, sort, filters, search, query, sorlaQuery }` |
 | `loadEnd` | same plus `{ rows, hasMore, total }` |
 | `loadError` | same plus `{ error }` |

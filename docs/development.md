@@ -17,6 +17,8 @@ npm run demo     # build + serve the examples at http://localhost:5173/examples/
 | `npm test` | Node's test runner on `test/**/*.test.ts` against the sources |
 | `npm run check` | lint + typecheck + test + build, which is what CI or a release should run |
 | `npm run demo` | build, then `scripts/serve.ts` (static server on port 5173, `PORT` to change) |
+| `npm run test:e2e` | build, then the Playwright tests in `e2e/` in real Chromium (`npx playwright install chromium` once) |
+| `npm run bench` | build, then [`bench/run.ts`](../bench/run.ts) in Chromium; see [Benchmarks](benchmarks.md) |
 
 ## Build output
 
@@ -30,6 +32,10 @@ npm run demo     # build + serve the examples at http://localhost:5173/examples/
 
 `package.json` `exports` maps `intelligent-grid` (import/require/types), `intelligent-grid/styles.css`,
 `intelligent-grid/styles.min.css` and `intelligent-grid/browser`.
+
+The build prints the gzip size of the browser bundle and **fails above its budget** (64 kB for the
+JavaScript, 5 kB for the CSS, set in `scripts/build.ts`). Raise the budget on purpose when a feature
+is worth it.
 
 `dist/` **is committed**: the pre-commit hook rebuilds it, so the GitHub repository always has an
 up-to-date build (usable straight from a CDN such as jsDelivr's GitHub endpoint).
@@ -51,7 +57,7 @@ emergency with `git commit --no-verify` / `git push --no-verify`.
 - Relative imports use the `.ts` extension. The build rewrites them for the declarations.
 - Type-only imports use `import type` (enforced by ESLint).
 - 4-space indentation, single quotes, semicolons; follow the surrounding code.
-- Anything that works around SorlaDB goes in `src/core/store.ts`, marked `SorlaDB 1.0 workaround`.
+- Anything that goes around the SorlaDB API lives in `src/core/store.ts`, marked `SorlaDB:` with the reason.
 
 ## Tests
 
@@ -62,6 +68,12 @@ emergency with `git commit --no-verify` / `git push --no-verify`.
 | `test/engine-export.test.ts` | calculated columns, incremental recalculation, CSV, XLSX package |
 | `test/grid.dom.test.ts` | the grid UI in jsdom: rendering, sorting, filters, editing, selection, export, append mode |
 | `test/api-types.test.ts` | documented API usage type-checks and works |
+| `test/query.test.ts`, `test/query-builder.dom.test.ts` | advanced filter model, SorlaDB JSON, the builder panel |
+| `test/undo.dom.test.ts`, `test/range.dom.test.ts`, `test/fill.test.ts` | undo / redo, cell ranges, fill handle series |
+| `test/find.dom.test.ts`, `test/group.dom.test.ts`, `test/presets.dom.test.ts` | find / replace / go to, grouping and subtotals, data bars, color scales, icon sets |
+| `test/import.dom.test.ts`, `test/extras.dom.test.ts` | CSV / XLSX import (with an Excel-style deflated file), duplicates, sparklines, comments |
+| `test/virtual.test.ts` | row layout and column window math |
+| `e2e/*.spec.ts` | Playwright: virtualization with 100 000 rows, pinned columns, wrapped text, mouse drag ranges, fill handle auto scroll, real clipboard, Ctrl+F, file input import, group rows |
 
 ## Releasing
 

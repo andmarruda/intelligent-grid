@@ -13,15 +13,19 @@ creates a cell formula or value for that row only.
 
 | Action | Keys |
 |---|---|
-| Move the active cell | arrows, Tab / Shift+Tab |
+| Move the active cell | arrows, Tab / Shift+Tab, Ctrl/Cmd+arrow to the edge of the data |
 | Start editing | double-click, Enter, F2, or just start typing (replaces the content, like Excel) |
 | Commit | Enter (moves down), Shift+Enter (up), Tab / Shift+Tab (sideways), clicking elsewhere |
 | Cancel | Esc |
-| Clear a cell | Delete / Backspace |
+| Clear a cell or a range | Delete / Backspace (one undo step) |
 | New line in a textarea editor | Shift+Enter or Alt+Enter |
 | Toggle a boolean | click the checkbox |
-| Copy | Ctrl/Cmd+C: selected rows (tab separated, as displayed) or the active cell |
-| Paste | Ctrl/Cmd+V: a tab separated block from the active cell, cell by cell |
+| Copy | Ctrl/Cmd+C: the cell range, the selected rows (tab separated, as displayed) or the active cell |
+| Paste | Ctrl/Cmd+V: a tab separated block from the top left of the range; one value fills the whole range |
+| Undo / redo | Ctrl/Cmd+Z, Ctrl/Cmd+Y or Ctrl/Cmd+Shift+Z |
+
+Ranges, the fill handle, find / replace and the rest of the shortcuts are in
+[Spreadsheet features](spreadsheet.md).
 
 ## The change pipeline
 

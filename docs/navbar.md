@@ -13,6 +13,8 @@ navbar: {
     delete: true,                 // "Delete" for selected rows (needs selection)
     changes: true,                // "N changes" + "Discard changes" while there are unsaved changes
     query: true,                  // "Advanced filter" button: visual query builder
+    undo: true,                   // undo / redo buttons, when something is editable
+    import: false,                // "Import" button for .csv / .tsv / .xlsx, or import options
     items: [
         {
             label: 'Refresh',
@@ -26,7 +28,7 @@ navbar: {
 }
 ```
 
-Defaults: `search`, `filters`, `columns`, `changes`, `query` and `export: ['csv', 'xlsx']` on; `add`, `delete` off. See [Advanced filter](query-builder.md).
+Defaults: `search`, `filters`, `columns`, `changes`, `query`, `undo` and `export: ['csv', 'xlsx']` on; `add`, `delete`, `import` off. See [Advanced filter](query-builder.md) and [Import](import.md).
 
 The navbar re-renders when filters, sort, data or selection change, so `disabled` functions stay current.
 Buttons use the `ig-btn` class; danger buttons `ig-btn-danger`.
@@ -52,7 +54,7 @@ new IntelligentGrid('#grid', {
 
 | Request field | Value |
 |---|---|
-| `action` | `'delete'` or `'discard'` (or your own name) |
+| `action` | `'delete'`, `'discard'` or `'import'` (or your own name) |
 | `title`, `message` | Translated texts (`deleteTitle` / `confirmDelete`, `discardChanges` / `confirmDiscard`) |
 | `confirmLabel`, `cancelLabel` | Button texts |
 | `danger` | `true` for destructive actions |

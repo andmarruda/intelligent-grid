@@ -17,7 +17,7 @@
     <div class="toolbar">
         <button id="example">idade ≥ 30 E (produto = Café OU cidade em [São Paulo, Recife])</button>
         <button id="nested">NÃO pago E (total > 300 OU (vencimento &lt; 2026-04-01 E status = aberto))</button>
-        <button id="text">produto começa com "p" (avaliado pelo grid)</button>
+        <button id="text">produto começa com "p" ($regex)</button>
         <button id="run">Rodar o JSON direto no SorlaDB</button>
     </div>
     <div id="grid"></div>
@@ -88,7 +88,7 @@
             document.querySelector('#direct').textContent =
                 `sorla.db.orders.find(query).length = ${found}\ngrid rows shown          = ${grid.getRows('filtered').length}`;
         } catch (error) {
-            document.querySelector('#direct').textContent = `SorlaDB: ${error.message}\n(text rules use $regex, which SorlaDB does not support yet; the grid evaluates them itself)`;
+            document.querySelector('#direct').textContent = `SorlaDB: ${error.message}`;
         }
     });
 

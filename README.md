@@ -5,12 +5,15 @@ Excel-like data grid for the browser, written in TypeScript and powered by
 
 - **Multi-column sorting** by clicking headers (Shift/Ctrl+click adds columns)
 - **Excel AutoFilter** (value checklist + And/Or conditions), global search, formula filters, a **visual query builder** (nested AND / OR / NOT, shows the SorlaDB `find()` JSON), and a **navbar** with filter chips, column chooser, add/delete, export and your own buttons
+- **Large data**: row and column virtualization (100 000 rows scroll at 60 fps), pinned (frozen) columns, wrapped text; see the [benchmarks](docs/benchmarks.md)
+- **Spreadsheet editing**: cell ranges (drag, Shift+arrows), copy / paste / clear blocks, fill handle with series, undo / redo, find / replace / go to, cell comments, remove duplicates
+- **Grouping** with collapsible group rows and subtotals
 - **Append mode**: infinite scroll loading pages from your API
 - **Editing** with typed editors, locale-aware parsing, validation, cancelable events, custom editors, copy/paste
-- **Selection**: single or multiple, checkboxes, ranges, bulk actions
+- **Selection**: single or multiple rows, checkboxes, bulk actions
 - **Change tracking**: inserted, updated and deleted rows plus a full history, ready to send as JSON with a form
-- **CSV and real XLSX export** with typed cells, number formats and formulas kept as Excel formulas
-- **Formula engine**: 137 Excel functions, structured references (`[@qty]*[@price]`), calculated columns, cell formulas, footers, conditional formats, Excel number formats
+- **CSV and real XLSX export** with typed cells, number formats and formulas kept as Excel formulas, and **CSV / XLSX import**
+- **Formula engine**: 137 Excel functions, structured references (`[@qty]*[@price]`), calculated columns, cell formulas, footers, conditional formats (rules, data bars, color scales, icon sets), sparklines, Excel number formats
 
 Rows live in a SorlaDB collection, filters compile to the Sorla query language, and calculated
 values are stored in the documents, so they sort and filter like any other field.
@@ -18,7 +21,7 @@ values are stored in the documents, so they sort and filter like any other field
 ## Quick start
 
 ```bash
-npm install intelligent-grid sorla-db   # sorla-db 1.1+
+npm install intelligent-grid sorla-db   # sorla-db 1.5+
 ```
 
 ```html
@@ -64,6 +67,10 @@ The full documentation is in [`docs/`](docs/README.md).
 - [Advanced filter](docs/query-builder.md): visual query builder with nested AND / OR / NOT, generating the SorlaDB find() JSON
 - [Editing & validation](docs/editing.md): editors, parsing, validation, change hooks, keyboard, copy/paste
 - [Selection](docs/selection.md): single/multiple selection, checkboxes, bulk actions
+- [Spreadsheet features](docs/spreadsheet.md): ranges, fill handle, undo / redo, find / replace / go to, comments, duplicates, shortcuts
+- [Grouping & subtotals](docs/grouping.md): group rows, collapse, subtotals
+- [Import](docs/import.md): CSV, TSV and XLSX files
+- [Virtualization](docs/virtualization.md): large data, pinned columns, wrapped text
 - [Navbar & status bar](docs/navbar.md): built-in buttons, filter chips, custom items
 - [Append mode](docs/append-mode.md): infinite scroll from an API
 - [Export](docs/export.md): CSV and XLSX
@@ -86,8 +93,9 @@ The full documentation is in [`docs/`](docs/README.md).
 ### Project
 
 - [Architecture](docs/architecture.md): module layout and how the grid uses SorlaDB
-- [SorlaDB improvements](docs/sorla-db.md): SorlaDB 1.0 issues and workarounds
+- [SorlaDB status](docs/sorla-db.md): issues fixed upstream (1.1–1.5) and open items
 - [Development](docs/development.md): scripts, build, lint, husky hooks, tests, releasing
+- [Benchmarks](docs/benchmarks.md): 10 000 to 1 000 000 rows, bundle size
 
 ## Examples
 
@@ -98,6 +106,7 @@ The full documentation is in [`docs/`](docs/README.md).
 | [basic.html](examples/basic.html) | Columns, types, data and the default navbar |
 | [sorting-filtering.html](examples/sorting-filtering.html) | Multi-column sort, AutoFilter, search, formula filters |
 | [query-builder.html](examples/query-builder.html) | Advanced filter: nested AND / OR / NOT, live find() JSON, run it directly in SorlaDB |
+| [spreadsheet.html](examples/spreadsheet.html) | Ranges, fill handle, undo, find / replace, grouping, data bars, sparklines, comments, import, 100 000 rows |
 | [editing.html](examples/editing.html) | Editors, validation, cancelable events, a custom editor, paste |
 | [formulas.html](examples/formulas.html) | Calculated columns, cell formulas, footers, conditional formats, custom functions |
 | [infinite-scroll.html](examples/infinite-scroll.html) | Append mode with a fake paginated API |

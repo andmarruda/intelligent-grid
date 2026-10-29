@@ -32,7 +32,11 @@ const columns: ColumnDefinition[] = [
 | `onChange` | `(detail) => void` | | After a change was stored |
 | `formula` | `string` | | [Calculated column](formulas.md#calculated-columns), read-only unless `editable` is set |
 | `footer` | shortcut, formula or function | | See [Footers](formulas.md#footers) |
-| `conditionalFormats` | `ConditionalFormat[]` | `[]` | See [Conditional formats](formulas.md#conditional-formats) |
+| `subtotal` | shortcut, formula, function or `false` | `footer` | Value on [group rows](grouping.md#subtotals) |
+| `conditionalFormats` | `ConditionalFormat[]` | `[]` | Rules, data bars, color scales, icon sets: see [Conditional formats](formulas.md#conditional-formats) |
+| `sparkline` | `true \| { type, color, negativeColor, width, height, min, max }` | | Draw a list of numbers as a small chart, see [Sparklines](formulas.md#sparklines) |
+| `pinned` | `'left' \| 'right' \| null` | `null` | [Frozen column](virtualization.md#pinned-frozen-columns) |
+| `wrap` | `boolean` | `false` | Wrap text; the row grows to fit |
 | `render` | `(value, row, { column, grid, formatted }) => string \| Node` | | Custom cell content |
 | `html` | `boolean` | `false` | Let `render` return HTML (sanitize it yourself) |
 | `cellClass` | `string \| (value, row, column) => string` | | Extra cell classes |

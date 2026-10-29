@@ -15,8 +15,8 @@ Age ≥ 30  AND  ( Name = X  OR  City is one of A, B )
 ```
 
 The query runs **in SorlaDB**: every part of the tree that SorlaDB can express is executed by one
-`collection.find()`. This needs sorla-db 1.1+, which supports nested `$and` / `$or` / `$nor` and
-several operators per field.
+`collection.find()`. It needs sorla-db 1.5+ (nested `$and` / `$or` / `$nor`, several operators per
+field, `$regex`).
 
 ## In the panel
 
@@ -44,15 +44,16 @@ and its × removes it. "Clear filters" removes it too.
 Builder equality is SorlaDB `$eq`: `Name = X` does not match `x`. For case-insensitive matching use
 **contains / begins with / ends with**, or the column filter menu, whose "equals" ignores case.
 
-### Text matching runs in the grid
+### Text matching
 
-SorlaDB 1.1 has no `$regex` yet, so **contains, does not contain, begins with, ends with** are
-evaluated by the grid (case-insensitive). The panel marks those rules with a `grid` badge.
-Everything else still runs in SorlaDB, and when a group mixes both, each SorlaDB part still runs as
-one `find()` and the grid combines the results.
+**contains, does not contain, begins with, ends with** become case-insensitive `$regex` conditions
+(`{ "name": { "$regex": "^x", "$options": "i" } }`) and run in SorlaDB like everything else. A MongoDB
+backend understands the same JSON. Special characters are escaped, so `a.b` looks for a literal dot.
+On **select** columns the text is matched against the labels users see, and the query uses the
+matching option values (`{ "status": { "$in": ["open"] } }`).
 
-The JSON writes text rules as MongoDB `$regex` conditions (`{ "name": { "$regex": "^x", "$options": "i" } }`),
-which a MongoDB backend understands and SorlaDB can run once it supports `$regex`.
+The only rule SorlaDB cannot express is "≠ a day" on a datetime column. The grid evaluates it, and
+a group mixing it with other rules still sends every other part to `find()`.
 
 ## API
 
@@ -118,7 +119,9 @@ How rules become SorlaDB conditions:
 | `name eq 'X'` | `{ name: { $eq: 'X' } }` |
 | `city in ['A', 'B']` | `{ city: { $in: ['A', 'B'] } }` |
 | `joined empty` | `{ joined: { $eq: '' } }` (blanks are stored as `''`) |
-| `name startsWith 'x'` | `{ name: { $regex: '^x', $options: 'i' } }` (grid side) |
+| `name startsWith 'x'` | `{ name: { $regex: '^x', $options: 'i' } }` |
+| `name notContains 'x'` | `{ name: { $not: { $regex: 'x', $options: 'i' } } }` |
+| `status contains 'abe'` (select) | `{ status: { $in: ['open'] } }` (labels matched) |
 | group `or` | `{ $or: [...] }` |
 | group with `not` | `{ $nor: [...] }` |
 

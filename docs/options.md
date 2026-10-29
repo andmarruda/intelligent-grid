@@ -25,10 +25,18 @@ new IntelligentGrid(target: string | HTMLElement, options: GridOptions)
 | `initialSort` | `SortEntry[]` | `[]` | e.g. `[{ field: 'due', dir: 'asc' }]` |
 | `initialFilters` | `FilterModel` | `{}` | See [filter model](sorting-filtering.md#filter-model) |
 | `initialQuery` | `QueryNode \| null` | `null` | [Advanced filter](query-builder.md) applied on load |
-| `selection` | `{ mode, checkbox, selectOnClick } \| false` | `{ mode: 'multiple', checkbox: true }` | See [Selection](selection.md) |
+| `selection` | `{ mode, checkbox, selectOnClick } \| false` | `{ mode: 'multiple', checkbox: true, selectOnClick: false }` | See [Selection](selection.md) |
 | `navbar` | `NavbarOptions \| false` | search, filters, columns, export | See [Navbar](navbar.md) |
 | `statusBar` | `boolean` | `true` | "x of y rows · n selected" |
-| `renderChunk` | `number` | `100` | Rows appended to the DOM per scroll step |
+| `rowHeight` | `number \| null` | measured | Row height in px, see [Virtualization](virtualization.md) |
+| `overscan` | `number` | `8` | Rows rendered above and below the viewport |
+| `virtualColumns` | `number` | `40` | Above this many columns, only the ones in view are rendered |
+| `undoLimit` | `number` | `100` | Undo steps kept, see [undo and redo](spreadsheet.md#undo-and-redo) |
+| `find` | `boolean` | `true` | Find / replace / go to bar on Ctrl+F, Ctrl+H, Ctrl+G |
+| `groupBy` | `string[]` | `[]` | [Group](grouping.md) rows by these fields |
+| `groupsCollapsed` | `boolean` | `false` | Groups start collapsed |
+| `comments` | `CellComment[]` | `[]` | [Cell comments](spreadsheet.md#comments) on load |
+| `renderChunk` | `number` | | Ignored (rows are virtualized) |
 | `append` | `AppendOptions \| null` | `null` | Infinite scroll loader, see [Append mode](append-mode.md) |
 | `rowClass` | `(row) => string` | | Extra class per row |
 | `rowFormats` | `ConditionalFormat[]` | `[]` | [Conditional formats](formulas.md#conditional-formats) for whole rows |

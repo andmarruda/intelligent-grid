@@ -36,6 +36,10 @@ grid.root.classList.add('brand');
 | `--ig-radius` | Corner radius |
 | `--ig-row-height` | Row height |
 | `--ig-shadow` | Popover shadow |
+| `--ig-range-bg` | Tint of a selected cell range and of fill handle targets |
+| `--ig-find-bg` | Cells matching find |
+| `--ig-databar` / `--ig-cf-good` / `--ig-cf-mid` / `--ig-cf-bad` | Data bars and icon set colors |
+| `--ig-comment` | Comment corner mark |
 
 ## Dark mode
 
@@ -60,6 +64,18 @@ palette, redefine the variables inside your own `@media (prefers-color-scheme: d
 | `ig-cell-changed` | `td` | value differs from the original |
 | `ig-sortable`, `ig-sorted` | `th` | |
 | `ig-footer` | `tfoot tr` | footer row |
+| `ig-row-alt` | `tr` | every other row (zebra) |
+| `ig-in-range`, `ig-range-top` / `-bottom` / `-left` / `-right` | `td` | cell range and its edges |
+| `ig-fill-handle` | `span` in the corner cell | fill handle; `ig-fill-target` on cells being filled |
+| `ig-find-match` | `td` | find matches |
+| `ig-has-comment` | `td` | cell with a comment; `ig-comment-tip`, `ig-comment-editor` for the tooltip and editor |
+| `ig-group-row`, `ig-group-level-<n>`, `ig-group-collapsed` | `tr` | [group rows](grouping.md) |
+| `ig-databar`, `ig-cf-icon-good` / `-mid` / `-bad` | `td` / `i` | conditional format presets |
+| `ig-sparkline-cell`, `ig-sparkline-line` / `-bar` / `-winloss` | `td` / `svg` | sparklines |
+| `ig-pinned`, `ig-pinned-left` / `-right`, `ig-pinned-left-edge` / `-right-edge` | `td`, `th` | pinned columns |
+| `ig-wrap` | `td` | wrapped text |
+| `ig-dragging` | `.ig` | while dragging a range or the fill handle |
+| `ig-find` | find bar | |
 | `ig-is-loading` | `.ig` | append mode request in flight |
 | `ig-modal-backdrop`, `ig-modal`, `ig-modal-title`, `ig-modal-message`, `ig-modal-actions` | confirmation modal | |
 | `ig-qb`, `ig-qb-group` (`data-join`, `ig-qb-negated`), `ig-qb-rule` (`ig-qb-incomplete`), `ig-qb-json`, `ig-chip-query` | advanced filter | |

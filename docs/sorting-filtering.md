@@ -80,10 +80,11 @@ The navbar search box (or `grid.setSearch(text)`) keeps rows where any **visible
 Filters compile to a SorlaDB query wherever the Sorla query language can express them: checklists
 become `$in`, ranges `$gt/$gte/$lt/$lte` plus `$ne: ''` to skip blanks, blanks `$eq: ''`, booleans
 and select values `$eq`, and conditions joined by **Or** become `$or`. Several filtered columns are
-combined with `$and`. Case-insensitive text matching (SorlaDB has no `$regex` yet), formulas, `test`
-functions and search run as JavaScript predicates over what SorlaDB returns.
+combined with `$and`. Text operators become case-insensitive `$regex` conditions, and on select columns
+they match the labels and send the matching values as `$in` / `$nin`. Only formulas, `test` functions
+and the global search (it matches the displayed text) run as JavaScript predicates.
 
 For nested AND / OR / NOT logic across columns, use the [advanced filter](query-builder.md). See [architecture](architecture.md)
-and [SorlaDB improvements](sorla-db.md) for what would let more of it move into SorlaDB.
+and [SorlaDB status](sorla-db.md).
 
 In [append mode](append-mode.md) with `serverSide: true`, sort, filters and search go to your loader instead.

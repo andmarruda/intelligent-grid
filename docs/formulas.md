@@ -125,6 +125,42 @@ rowFormats: [{ formula: '=AND(NOT([@paid]),[@due]<TODAY())', className: 'late' }
 Every format whose formula returns `TRUE` (or whose `when` returns true) applies its `className`
 and/or inline `style`. Formats are evaluated each time the cell renders.
 
+### Data bars, color scales and icon sets
+
+Excel's ready-made formats place each number between the column minimum and maximum over the
+filtered rows (or the `min` / `max` you give), and redraw when an edit moves them:
+
+```ts
+{ field: 'sales', conditionalFormats: [{ type: 'dataBar' }] }                               // bar from 0 to the maximum
+{ field: 'sales', conditionalFormats: [{ type: 'dataBar', color: '#63be7b', showValue: false }] }
+{ field: 'margin', conditionalFormats: [{ type: 'colorScale' }] }                           // red, yellow, green
+{ field: 'margin', conditionalFormats: [{ type: 'colorScale', colors: ['#ffffff', '#1a73e8'], min: 0, max: 1 }] }
+{ field: 'trend', conditionalFormats: [{ type: 'iconSet', icons: 'arrows' }] }              // ↓ → ↑ by thirds
+{ field: 'score', conditionalFormats: [{ type: 'iconSet', icons: ['😞', '😐', '🙂'], thresholds: [50, 80], thresholdType: 'number' }] }
+```
+
+| Type | Options |
+|---|---|
+| `dataBar` | `color`, `min` (default the minimum or 0), `max`, `showValue` |
+| `colorScale` | `colors` (two or more hex colors, default red / yellow / green), `min`, `max` |
+| `iconSet` | `icons` (`'arrows'`, `'traffic'`, `'flags'`, `'stars'` or your own, low to high), `thresholds` (percents of the range, default equal parts, or numbers with `thresholdType: 'number'`), `reverse`, `min`, `max`, `showValue` |
+
+Blank and non-numeric cells get no format. Presets and rules can be mixed in the same list. The
+colors of bars and icons come from the `--ig-databar`, `--ig-cf-good`, `--ig-cf-mid` and
+`--ig-cf-bad` [theme variables](theming.md).
+
+## Sparklines
+
+```ts
+{ field: 'last12', sparkline: true }                                   // line
+{ field: 'last12', sparkline: { type: 'bar', negativeColor: '#d93025' } }
+{ field: 'results', sparkline: { type: 'winloss' } }                   // up for positive, down for negative
+```
+
+The value is a list of numbers (`[3, 5, 2]`) or text such as `"3,5,2"`. Each row is scaled to its
+own range unless you set `min` and `max`. Sparklines are inline SVG; export writes the numbers as
+text.
+
 ## Formula filters & ad-hoc evaluation
 
 ```ts

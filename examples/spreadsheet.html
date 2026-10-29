@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Spreadsheet features · Intelligent Grid</title>
+    <link rel="stylesheet" href="../dist/intelligent-grid.css">
+    <link rel="stylesheet" href="./shared.css">
+</head>
+<body>
+<main>
+    <nav class="back"><a href="./index.html">← All examples</a></nav>
+    <header>
+        <h1>Spreadsheet features</h1>
+        <p>Drag over cells to select a range, then <b>Ctrl+C</b>, <b>Ctrl+V</b> or <b>Delete</b>. Drag the small square on the corner of the range to fill a series (try the <b>qty</b> column, or the <b>code</b> column with <code>A001</code>). <b>Ctrl+Z</b> undoes, <b>Ctrl+F</b> / <b>Ctrl+H</b> / <b>Ctrl+G</b> find, replace and go to, <b>Shift+F2</b> edits a cell comment. The <b>Import</b> button reads a CSV or XLSX file (export one first to try).</p>
+    </header>
+    <div class="toolbar">
+        <button id="group">Group by city</button>
+        <button id="group2">Group by city, then status</button>
+        <button id="ungroup">Ungroup</button>
+        <button id="collapse">Collapse groups</button>
+        <button id="dupes">Remove duplicate product + city</button>
+        <button id="big">Load 100 000 rows</button>
+    </div>
+    <div id="grid"></div>
+    <section>
+        <h2>Events</h2>
+        <pre class="log" id="log"></pre>
+    </section>
+</main>
+<script src="../node_modules/sorla-db/dist/sorla.min.js"></script>
+<script type="module">
+    import { IntelligentGrid } from '../dist/index.js';
+    import { orders, STATUS, logger } from './data.js';
+
+    const log = logger(document.querySelector('#log'));
+    const withExtras = rows => rows.map((row, i) => ({
+        ...row,
+        code: `A${String(i + 1).padStart(3, '0')}`,
+        // last six months of sales, for the sparkline
+        trend: Array.from({ length: 6 }, (_, m) => Math.round(row.qty * (1 + Math.sin(row.id + m)) * 10))
+    }));
+
+    const grid = new IntelligentGrid('#grid', {
+        locale: 'en-US',
+        idField: 'id',
+        editable: true,
+        height: 520,
+        data: withExtras(orders(300)),
+        navbar: { title: 'Orders', import: true, add: true, delete: true },
+        comments: [{ id: '1', field: 'product', text: 'First order of the year' }],
+        columns: [
+            { field: 'id', title: '#', type: 'integer', width: 70, editable: false, pinned: 'left' },
+            { field: 'code', title: 'Code', width: 90, pinned: 'left' },
+            { field: 'product', title: 'Product', width: 150 },
+            { field: 'city', title: 'City', width: 150 },
+            { field: 'status', title: 'Status', options: STATUS, width: 110 },
+            { field: 'qty', title: 'Qty', type: 'integer', width: 120, footer: 'sum', conditionalFormats: [{ type: 'dataBar' }] },
+            { field: 'price', title: 'Price', type: 'currency', currency: 'USD', width: 110, conditionalFormats: [{ type: 'colorScale', colors: ['#ffffff', '#9ec5fe'] }] },
+            { field: 'discount', title: 'Discount', type: 'percent', width: 110, conditionalFormats: [{ type: 'iconSet', icons: 'traffic', reverse: true }] },
+            { field: 'total', title: 'Total', type: 'currency', currency: 'USD', width: 130, formula: '=[@qty]*[@price]*(1-[@discount])', footer: 'sum', subtotal: 'sum' },
+            { field: 'trend', title: 'Last 6 months', width: 140, editable: false, sparkline: { type: 'line' } },
+            { field: 'due', title: 'Due', type: 'date', width: 120 },
+            { field: 'paid', title: 'Paid', type: 'boolean', width: 70 }
+        ]
+    });
+
+    for (const type of ['rangeChange', 'fill', 'paste', 'replace', 'undo', 'redo', 'commentChange', 'groupToggle', 'import']) {
+        grid.on(type, e => log(type, type === 'rangeChange' && e.detail ? { rows: e.detail.rows.length, fields: e.detail.fields } : e.detail));
+    }
+
+    document.querySelector('#group').onclick = () => grid.setGroupBy(['city']);
+    document.querySelector('#group2').onclick = () => grid.setGroupBy(['city', 'status']);
+    document.querySelector('#ungroup').onclick = () => grid.setGroupBy(null);
+    document.querySelector('#collapse').onclick = () => grid.collapseGroups();
+    document.querySelector('#dupes').onclick = async () => {
+        const ids = grid.findDuplicates({ fields: ['product', 'city'] });
+        if (await grid.confirm({ action: 'duplicates', message: `Remove ${ids.length} duplicate row(s)? Ctrl+Z brings them back.`, danger: true })) {
+            log('removeDuplicates', grid.removeDuplicates({ fields: ['product', 'city'] }).length);
+        }
+    };
+    document.querySelector('#big').onclick = () => {
+        const start = performance.now();
+        grid.setData(withExtras(orders(100_000)));
+        log('setData 100 000 rows', `${Math.round(performance.now() - start)} ms`);
+    };
+</script>
+</body>
+</html>
