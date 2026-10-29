@@ -10,6 +10,7 @@
  */
 import { compile, evaluate, toCellResult } from './evaluator.ts';
 import type { EvaluationContext } from './evaluator.ts';
+import type { AstNode } from './parser.ts';
 import { collectDependencies } from './parser.ts';
 import { ERRORS, err, isError } from './errors.ts';
 import { fromCell } from './values.ts';
@@ -38,6 +39,8 @@ export class CalcEngine {
     order: string[] = [];
     circular = new Set<string>();
     private columnCache = new Map<string, FormulaValue[]>();
+    // row independent results for ad-hoc evaluations over every row; cleared on every data change
+    private sharedMemo = new Map<AstNode, FormulaValue>();
 
     constructor({ store, locale = 'en-US', names = {}, functions = new Map() }: {
         store: SorlaStore;
@@ -52,6 +55,7 @@ export class CalcEngine {
     }
 
     setColumns(columns: Column[]): void {
+        this.invalidate();
         this.fields = new Set(columns.map(c => c.field));
         this.columnFormulas.clear();
         for (const column of columns) {
@@ -62,8 +66,9 @@ export class CalcEngine {
         this.buildGraph();
     }
 
-    private context(row: RowData | null | undefined, columnValues: (field: string) => FormulaValue[]): EvaluationContext {
+    private context(row: RowData | null | undefined, columnValues: (field: string) => FormulaValue[], memo?: Map<AstNode, FormulaValue>): EvaluationContext {
         return {
+            memo,
             locale: this.locale,
             decimalSeparator: localeSeparators(this.locale).decimal,
             functions: this.functions,
@@ -179,25 +184,33 @@ export class CalcEngine {
         this.setColumns(columns);
     }
 
-    private computeCell(id: string, field: string): void {
+    private computeCell(id: string, field: string, memo: Map<AstNode, FormulaValue>): void {
         const formula = this.formulaFor(id, field);
         if (!formula) return;
         const row = this.store.get(id);
         if (!row) return;
-        const value = toCellResult(evaluate(compile(formula).ast, this.context(row, this.allValues)));
+        const value = toCellResult(evaluate(compile(formula).ast, this.context(row, this.allValues, memo)));
         row[field] = toStored(value);
     }
 
     private computeColumn(field: string, ids: string[]): void {
-        for (const id of ids) this.computeCell(id, field);
+        // the columns this one depends on are final here (topological order), so one memo per column
+        const memo = new Map<AstNode, FormulaValue>();
+        for (const id of ids) this.computeCell(id, field, memo);
         this.columnCache.delete(field);
+    }
+
+    /** Forgets cached results; called whenever row values change. */
+    invalidate(): void {
+        this.columnCache.clear();
+        this.sharedMemo.clear();
     }
 
     /**
      * Recomputes every formula of every row.
      */
     recalculateAll(): void {
-        this.columnCache.clear();
+        this.invalidate();
         const ids = this.store.ids();
         for (const field of this.circular) {
             for (const id of ids) {
@@ -216,7 +229,7 @@ export class CalcEngine {
      * @return 'all' when every row may have changed, 'rows' otherwise
      */
     recalculate(ids: string[], fields: string[]): 'all' | 'rows' {
-        this.columnCache.clear();
+        this.invalidate();
         const dirty = new Map<string, 'rows' | 'all'>(fields.map(f => [f, 'rows']));
         let scope: 'all' | 'rows' = 'rows';
 
@@ -256,8 +269,7 @@ export class CalcEngine {
                 return values;
             }
             : this.allValues;
-        const result = toCellResult(evaluate(compile(formula).ast, this.context(row, columnValues)));
-        if (!rows) this.columnCache.clear();
-        return result;
+        // over every row the column cache and the shared memo stay valid until the next data change
+        return toCellResult(evaluate(compile(formula).ast, this.context(row, columnValues, rows ? undefined : this.sharedMemo)));
     }
 }

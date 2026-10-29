@@ -2508,6 +2508,38 @@ function toExcelFormula(ast, resolveRef, resolveName = () => null) {
 }
 
 // src/formula/evaluator.ts
+var VOLATILE = /* @__PURE__ */ new Set(["RAND", "RANDBETWEEN"]);
+var rowIndependent = /* @__PURE__ */ new WeakSet();
+function markRowIndependent(node) {
+  let independent;
+  switch (node.type) {
+    case "ref":
+      independent = node.scope === "column";
+      break;
+    case "call": {
+      const children = node.args.map(markRowIndependent);
+      independent = children.every(Boolean) && !VOLATILE.has(node.name);
+      break;
+    }
+    case "unary":
+    case "postfix":
+      independent = markRowIndependent(node.arg);
+      break;
+    case "binary": {
+      const left = markRowIndependent(node.left);
+      const right = markRowIndependent(node.right);
+      independent = left && right;
+      break;
+    }
+    case "array":
+      independent = node.items.map(markRowIndependent).every(Boolean);
+      break;
+    default:
+      return true;
+  }
+  if (independent) rowIndependent.add(node);
+  return independent;
+}
 var ARITHMETIC = {
   "+": (a, b) => a + b,
   "-": (a, b) => a - b,
@@ -2539,6 +2571,16 @@ function evaluate(node, ctx) {
   }
 }
 function evaluateNode(node, ctx) {
+  const memo = ctx.memo;
+  if (memo && rowIndependent.has(node)) {
+    if (memo.has(node)) return memo.get(node);
+    const value = evaluateFresh(node, ctx);
+    memo.set(node, value);
+    return value;
+  }
+  return evaluateFresh(node, ctx);
+}
+function evaluateFresh(node, ctx) {
   switch (node.type) {
     case "number":
     case "string":
@@ -2616,6 +2658,7 @@ function compile(formula) {
   let compiled;
   try {
     compiled = { ast: parse(key), error: null };
+    markRowIndependent(compiled.ast);
   } catch (e) {
     if (!(e instanceof FormulaSyntaxError)) throw e;
     compiled = { ast: { type: "error", code: ERRORS.SYNTAX }, error: e };
@@ -2640,6 +2683,8 @@ var CalcEngine = class {
   order = [];
   circular = /* @__PURE__ */ new Set();
   columnCache = /* @__PURE__ */ new Map();
+  // row independent results for ad-hoc evaluations over every row; cleared on every data change
+  sharedMemo = /* @__PURE__ */ new Map();
   constructor({ store, locale = "en-US", names = {}, functions = /* @__PURE__ */ new Map() }) {
     this.store = store;
     this.locale = locale;
@@ -2647,6 +2692,7 @@ var CalcEngine = class {
     this.functions = functions;
   }
   setColumns(columns) {
+    this.invalidate();
     this.fields = new Set(columns.map((c) => c.field));
     this.columnFormulas.clear();
     for (const column of columns) {
@@ -2656,8 +2702,9 @@ var CalcEngine = class {
     }
     this.buildGraph();
   }
-  context(row, columnValues) {
+  context(row, columnValues, memo) {
     return {
+      memo,
       locale: this.locale,
       decimalSeparator: localeSeparators(this.locale).decimal,
       functions: this.functions,
@@ -2758,23 +2805,29 @@ var CalcEngine = class {
     this.cellFormulas.clear();
     this.setColumns(columns);
   }
-  computeCell(id, field) {
+  computeCell(id, field, memo) {
     const formula = this.formulaFor(id, field);
     if (!formula) return;
     const row = this.store.get(id);
     if (!row) return;
-    const value = toCellResult(evaluate(compile(formula).ast, this.context(row, this.allValues)));
+    const value = toCellResult(evaluate(compile(formula).ast, this.context(row, this.allValues, memo)));
     row[field] = toStored(value);
   }
   computeColumn(field, ids) {
-    for (const id of ids) this.computeCell(id, field);
+    const memo = /* @__PURE__ */ new Map();
+    for (const id of ids) this.computeCell(id, field, memo);
     this.columnCache.delete(field);
+  }
+  /** Forgets cached results; called whenever row values change. */
+  invalidate() {
+    this.columnCache.clear();
+    this.sharedMemo.clear();
   }
   /**
    * Recomputes every formula of every row.
    */
   recalculateAll() {
-    this.columnCache.clear();
+    this.invalidate();
     const ids = this.store.ids();
     for (const field of this.circular) {
       for (const id of ids) {
@@ -2792,7 +2845,7 @@ var CalcEngine = class {
    * @return 'all' when every row may have changed, 'rows' otherwise
    */
   recalculate(ids, fields) {
-    this.columnCache.clear();
+    this.invalidate();
     const dirty = new Map(fields.map((f) => [f, "rows"]));
     let scope = "rows";
     for (const field of this.order) {
@@ -2827,9 +2880,7 @@ var CalcEngine = class {
       }
       return values;
     } : this.allValues;
-    const result = toCellResult(evaluate(compile(formula).ast, this.context(row, columnValues)));
-    if (!rows) this.columnCache.clear();
-    return result;
+    return toCellResult(evaluate(compile(formula).ast, this.context(row, columnValues, rows ? void 0 : this.sharedMemo)));
   }
 };
 

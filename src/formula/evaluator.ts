@@ -19,6 +19,53 @@ export interface EvaluationContext extends FunctionContext {
     columnValues: (field: string) => FormulaValue;
     name?: (name: string) => FormulaValue | undefined;
     functions?: Map<string, FunctionDefinition>;
+    /**
+     * Results of row independent subexpressions, shared by every row of one calculation pass:
+     * SUM([total]) in =[@total]/SUM([total]) is computed once per column instead of once per row.
+     */
+    memo?: Map<AstNode, FormulaValue>;
+}
+
+// functions that must run for every cell even when their arguments do not depend on the row
+const VOLATILE = new Set(['RAND', 'RANDBETWEEN']);
+
+/** Subexpressions whose value is the same for every row (no [@field] and nothing volatile). */
+const rowIndependent = new WeakSet<AstNode>();
+
+/**
+ * Marks the row independent subexpressions worth caching.
+ * @return whether the node itself is row independent
+ */
+function markRowIndependent(node: AstNode): boolean {
+    let independent: boolean;
+    switch (node.type) {
+        case 'ref':
+            independent = node.scope === 'column';
+            break;
+        case 'call': {
+            const children = node.args.map(markRowIndependent);
+            independent = children.every(Boolean) && !VOLATILE.has(node.name);
+            break;
+        }
+        case 'unary':
+        case 'postfix':
+            independent = markRowIndependent(node.arg);
+            break;
+        case 'binary': {
+            const left = markRowIndependent(node.left);
+            const right = markRowIndependent(node.right);
+            independent = left && right;
+            break;
+        }
+        case 'array':
+            independent = node.items.map(markRowIndependent).every(Boolean);
+            break;
+        default:
+            // literals, names and empty arguments are cheap: nothing to cache
+            return true;
+    }
+    if (independent) rowIndependent.add(node);
+    return independent;
 }
 
 const ARITHMETIC: Record<string, (a: number, b: number) => number> = {
@@ -55,6 +102,17 @@ export function evaluate(node: AstNode, ctx: EvaluationContext): FormulaValue {
 }
 
 function evaluateNode(node: AstNode, ctx: EvaluationContext): FormulaValue {
+    const memo = ctx.memo;
+    if (memo && rowIndependent.has(node)) {
+        if (memo.has(node)) return memo.get(node)!;
+        const value = evaluateFresh(node, ctx);
+        memo.set(node, value);
+        return value;
+    }
+    return evaluateFresh(node, ctx);
+}
+
+function evaluateFresh(node: AstNode, ctx: EvaluationContext): FormulaValue {
     switch (node.type) {
         case 'number':
         case 'string':
@@ -152,6 +210,7 @@ export function compile(formula: string): CompiledFormula {
     let compiled: CompiledFormula;
     try {
         compiled = { ast: parse(key), error: null };
+        markRowIndependent(compiled.ast);
     } catch (e) {
         if (!(e instanceof FormulaSyntaxError)) throw e;
         compiled = { ast: { type: 'error', code: ERRORS.SYNTAX }, error: e };

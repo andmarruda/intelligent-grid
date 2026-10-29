@@ -114,3 +114,37 @@ test('XLSX package: valid zip, typed cells, translated formulas, number formats'
     assert.equal(columnLetter(27), 'AB');
     assert.equal(crc32(new TextEncoder().encode('123456789')), 0xCBF43926);
 });
+
+test('row independent subexpressions are computed once per column, not once per row', () => {
+    const columns = [
+        { field: 'v', type: 'number' as const },
+        { field: 'share', type: 'number' as const, formula: '=[@v]/SUM([v])' },
+        { field: 'noise', type: 'number' as const, formula: '=RAND()+[@v]*0' }
+    ].map(d => normalizeColumn(d, grid));
+    const store = new SorlaStore({ sorla: Sorla });
+    store.setFields(columns.map(c => c.field));
+    const calc = new CalcEngine({ store, locale: 'en-US' });
+    calc.setColumns(columns);
+    const count = 20_000;
+    const ids = store.insert(Array.from({ length: count }, (_, i) => ({ v: i + 1 })));
+
+    const started = Date.now();
+    calc.recalculateAll();
+    const elapsed = Date.now() - started;
+    // quadratic evaluation took seconds here; linear takes well under one
+    assert.ok(elapsed < 3000, `recalculation took ${elapsed} ms`);
+
+    const total = (count * (count + 1)) / 2;
+    assert.equal(store.get(ids[9])!.share, 10 / total);
+    // RANK([@v],[v]) depends on the row: it must not be cached (and is inherently quadratic)
+    assert.equal(calc.evaluate('=RANK([@v],[v])', store.get(ids[0])!), count);
+    assert.equal(calc.evaluate('=RANK([@v],[v])', store.get(ids[count - 1])!), 1);
+    const noise = new Set(ids.slice(0, 50).map(id => store.get(id)!.noise));
+    assert.ok(noise.size > 45, 'RAND() is evaluated per row');
+
+    // a change invalidates the cached SUM
+    store.update(ids[0], { v: total });
+    calc.recalculate([ids[0]], ['v']);
+    assert.equal(store.get(ids[1])!.share, 2 / (total * 2 - 1));
+    assert.equal(calc.evaluate('=SUM([v])'), total * 2 - 1);
+});

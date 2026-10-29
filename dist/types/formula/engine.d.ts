@@ -18,6 +18,7 @@ export declare class CalcEngine {
     order: string[];
     circular: Set<string>;
     private columnCache;
+    private sharedMemo;
     constructor({ store, locale, names, functions }: {
         store: SorlaStore;
         locale?: string;
@@ -45,6 +46,8 @@ export declare class CalcEngine {
     reset(columns: Column[]): void;
     private computeCell;
     private computeColumn;
+    /** Forgets cached results; called whenever row values change. */
+    invalidate(): void;
     /**
      * Recomputes every formula of every row.
      */

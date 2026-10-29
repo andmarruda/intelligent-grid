@@ -7,6 +7,11 @@ export interface EvaluationContext extends FunctionContext {
     columnValues: (field: string) => FormulaValue;
     name?: (name: string) => FormulaValue | undefined;
     functions?: Map<string, FunctionDefinition>;
+    /**
+     * Results of row independent subexpressions, shared by every row of one calculation pass:
+     * SUM([total]) in =[@total]/SUM([total]) is computed once per column instead of once per row.
+     */
+    memo?: Map<AstNode, FormulaValue>;
 }
 export declare function evaluate(node: AstNode, ctx: EvaluationContext): FormulaValue;
 /**
