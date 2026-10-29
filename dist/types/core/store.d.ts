@@ -51,12 +51,23 @@ export declare class SorlaStore {
      */
     get(id: string): RowData | undefined;
     /**
-     * SorlaDB: values are written on the document data instead of updateOne(). updateOne() scans the
-     * collection and replaces the document object, which is too slow for formula recalculation (one
-     * write per row of a column) and would invalidate the id index above. Needs an indexed bulk write.
+     * Writes values with updateOne() by _id: indexed, validated by a collection schema, and seen by
+     * other code that listens to the collection (watch(), events).
      * @return previous values of the changed fields
      */
     update(id: string, patch: Record<string, unknown>): Record<string, unknown>;
+    /**
+     * Writes a calculated value. SorlaDB: written on the document data, without updateOne(): formula
+     * recalculation writes one value per row of a column (100 000 for a column), where updateOne()
+     * would copy each document and cost about 2 ms per 1 000 rows. Calculated values are derived from
+     * the other fields, so no change event is emitted for them.
+     */
+    writeCalculated(data: RowData, field: string, value: unknown): void;
+    /**
+     * SorlaDB: updateOne() stores a new object for the document (stored data is never changed in
+     * place), so the id map points to the new one. find({_id}) uses the collection index.
+     */
+    private refresh;
     /**
      * @return removed rows data, in collection order
      */

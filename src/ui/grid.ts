@@ -4,7 +4,7 @@
  *   const grid = new IntelligentGrid('#orders', { columns, data, editable: true });
  *   grid.on('cellChange', e => save(e.detail.row));
  */
-import { SorlaStore, compareCells } from '../core/store.ts';
+import { SorlaStore, compareCells, encodeValue } from '../core/store.ts';
 import { Emitter } from '../core/events.ts';
 import { ChangeTracker } from '../core/changes.ts';
 import { UndoStack } from '../core/undo.ts';
@@ -41,7 +41,7 @@ import { sparkline, sparklineValues } from './sparkline.ts';
 import type {
     AppendOptions, CellChangeDetail, ChangeSource, Column, ConfirmRequest, ColumnDefinition, CellRef, ConditionalFormat, CsvExportOptions, PresetFormat, EditorInstance, FillDirection, FindOptions,
     ChangeTrackingOptions, Filter, FilterModel, GridEvent, QueryNode, GridEventHandler, GridOptions, NavbarItem, NavbarOptions, Row, RowData, SelectionMode,
-    CellComment, DuplicateOptions, GroupInfo, ImportOptions, ImportResult, ReplaceOptions, SelectionOptions, SortEntry, Translator, XlsxExportOptions
+    AppendLoadParams, CellComment, DuplicateOptions, GroupInfo, ImportOptions, ImportResult, LoadStreamOptions, ReplaceOptions, ServerChange, StreamController, StreamState, SelectionOptions, SortEntry, Translator, XlsxExportOptions
 } from '../types.ts';
 
 type ResolvedOptions = Required<Omit<GridOptions, 'selection' | 'navbar' | 'sort' | 'sorla' | 'database' | 'currency' | 'locale' | 'changeTracking' | 'confirm'>> & {
@@ -54,7 +54,7 @@ type ResolvedOptions = Required<Omit<GridOptions, 'selection' | 'navbar' | 'sort
     currency?: string;
 };
 
-interface AppendState extends Required<AppendOptions> {
+interface AppendState extends Required<Omit<AppendOptions, 'socket'>> {
     loaded: number;
     hasMore: boolean;
     loading: boolean;
@@ -229,6 +229,10 @@ export class IntelligentGrid {
     private _groupOf = new Map<string, string>();
     private _groupEls = new Map<string, HTMLTableRowElement>();
     private _knownGroups = new Set<string>();
+    // server connections: WebSocket pushes (append.socket) and a running SSE stream (loadStream)
+    private _offSocket: (() => void) | null = null;
+    private _stream: StreamController | null = null;
+    private _streamRefresh: ReturnType<typeof setTimeout> | undefined;
     // min / max of columns with data bars, color scales or icon sets, over the view
     private _stats = new Map<string, ColumnStats | null>();
     // short message in the status bar (after an import)
@@ -305,9 +309,7 @@ export class IntelligentGrid {
         this._collapseNew = this.options.groupsCollapsed;
         this._filters = { ...this.options.initialFilters };
         this._queryModel = normalizeQuery(this.options.initialQuery);
-        this._append = this.options.append
-            ? { pageSize: 100, serverSide: true, threshold: 200, ...this.options.append, loaded: 0, hasMore: true, loading: false, request: 0 }
-            : null;
+        this._append = this.options.append ? this._appendState(this.options.append) : null;
 
         this._setColumns(this.options.columns);
         this._build();
@@ -1127,6 +1129,21 @@ export class IntelligentGrid {
 
     /* ---------------------------------------------------------------- append / infinite scroll */
 
+    private _appendState(options: AppendOptions): AppendState {
+        const { socket, ...rest } = options;
+        const load = rest.load ?? (socket ? (params: AppendLoadParams) => socket.load({ ...params }) : null);
+        if (!load) throw new Error('append needs load(params) or a socket');
+        // rows the server pushes on the same connection go straight into the grid
+        if (socket) this._offSocket = socket.on('push', ({ message }) => this.applyServerChanges(message));
+        return { pageSize: 100, serverSide: true, threshold: 200, ...rest, load, loaded: 0, hasMore: true, loading: false, request: 0 };
+    }
+
+    /** Column filters and the advanced filter as one SorlaDB query (append mode where parameter). */
+    private _whereQuery(): Record<string, unknown> {
+        const { query } = compileFilters(this._filters, this._columnMap, { locale: this.locale, testFormula: () => true });
+        return andQuery([query, this.toSorlaQuery()]);
+    }
+
     private _resetAppend(): void {
         const append = this._append;
         if (!append) return;
@@ -1157,7 +1174,7 @@ export class IntelligentGrid {
         const request = append.request;
         const params = {
             offset: append.loaded, limit: append.pageSize, sort: this.getSort(), filters: this.getFilters(), search: this._search,
-            query: this.getQuery(), sorlaQuery: this.toSorlaQuery()
+            query: this.getQuery(), sorlaQuery: this.toSorlaQuery(), where: this._whereQuery()
         };
         this._setLoading(true);
         this.emit('loadStart', params);
@@ -2374,6 +2391,134 @@ export class IntelligentGrid {
         this._commentTip?.remove();
     }
 
+    /* ---------------------------------------------------------------- server changes */
+
+    /**
+     * Applies rows or deletions that come from the server (SSE blocks, WebSocket pushes, polling):
+     * rows with a known id update it, the others are added, ids are removed. Server changes are not
+     * unsaved changes and cannot be undone. Fields the user edited and did not save keep the user's value.
+     * @return ids inserted, updated and removed
+     */
+    applyServerChanges(change: ServerChange, { refresh = true }: { refresh?: boolean } = {}): { inserted: string[]; updated: string[]; removed: string[] } {
+        const result = { inserted: [] as string[], updated: [] as string[], removed: [] as string[] };
+        if (change.type === 'delete' || (!change.rows && change.ids)) {
+            const ids = (change.ids ?? []).map(String).filter(id => this.store.has(id));
+            if (ids.length) {
+                const gone = new Set(ids);
+                this.store.remove(ids);
+                this.calc.forgetRows(ids);
+                this._tracker?.forget(gone);
+                ids.forEach(id => this._selected.delete(id));
+                this._view = this._view.filter(row => !gone.has(row._id));
+                this.calc.recalculate([], this.columns.map(c => c.field));
+                result.removed = ids;
+            }
+        }
+
+        const fresh: Record<string, unknown>[] = [];
+        for (const row of change.rows ?? []) {
+            const raw = this.options.idField ? row[this.options.idField] : row._id;
+            const id = raw === undefined || raw === null || raw === '' ? null : String(raw);
+            if (id === null || !this.store.has(id)) {
+                fresh.push(row);
+                continue;
+            }
+            // keep what the user changed and did not save
+            const edited = this._tracker ? this._tracker.changedFields(id, this._readers) : {};
+            const patch: Record<string, unknown> = {};
+            for (const [field, value] of Object.entries(row)) {
+                if (field === '_id' || field in edited || this.getColumn(field)?.formula) continue;
+                patch[field] = value;
+                this._tracker?.rebase(id, field, encodeValue(value));
+            }
+            this.store.update(id, patch);
+            result.updated.push(id);
+        }
+        if (fresh.length) {
+            result.inserted = this._insert(fresh);
+            for (const id of result.inserted) this._view.push({ ...this.store.get(id)! });
+        }
+
+        if (result.updated.length) {
+            const scope = this.calc.recalculate(result.updated, this.columns.map(c => c.field));
+            this._syncRows(scope === 'all' ? null : result.updated);
+        }
+        if (result.inserted.length || result.removed.length) {
+            // sorted and filtered views put the new rows in place; without them the rows just follow
+            if (refresh && this._hasLocalQuery()) this.refresh();
+            else {
+                this._renderBody();
+                this._renderFooter();
+                this._renderNavbar();
+            }
+        }
+        this.emit('serverChange', result);
+        return result;
+    }
+
+    private _hasLocalQuery(): boolean {
+        if (this._append?.serverSide) return false;
+        return !!(this._sort.length || Object.keys(this._filters).length || this._search || this._queryModel || this._groupBy.length);
+    }
+
+    /**
+     * Loads rows from a Server-Sent Events endpoint in blocks (sorla-db 1.7.1+ stream protocol:
+     * meta, rows, delete, end). Rows show up as each block arrives; sorting and filters are applied
+     * again a few times per second and when the stream ends. The status bar shows the progress.
+     * @return the stream controller: done (a promise), state, close()
+     */
+    loadStream(url: string, options: LoadStreamOptions = {}): StreamController {
+        const Sorla = this.store.sorla.constructor as { stream?: (url: string, options: Record<string, unknown>) => StreamController };
+        if (typeof Sorla.stream !== 'function') throw new Error('loadStream needs sorla-db 1.7.1 or later');
+        const { replace = true, onProgress, ...streamOptions } = options;
+        this._stream?.close();
+        if (replace) this.setData([]);
+
+        const refreshSoon = () => {
+            if (this._streamRefresh !== undefined || !this._hasLocalQuery()) return;
+            this._streamRefresh = setTimeout(() => {
+                this._streamRefresh = undefined;
+                this.refresh();
+            }, 300);
+        };
+        const progress = (state: StreamState) => {
+            this._notice = state.total ? this.t('streamProgress', { loaded: state.loaded, total: state.total }) : this.t('streamLoaded', { loaded: state.loaded });
+            this._renderNavbar();
+            onProgress?.(state);
+        };
+        this._setLoading(true);
+        const stream = Sorla.stream(url, {
+            ...streamOptions,
+            onProgress: progress,
+            apply: (type: string, data: unknown) => {
+                const list = Array.isArray(data) ? data : (data as { rows?: unknown[]; ids?: unknown[] });
+                if (type === 'rows') this.applyServerChanges({ type: 'rows', rows: (Array.isArray(list) ? list : list.rows ?? []) as Record<string, unknown>[] }, { refresh: false });
+                else if (type === 'delete') this.applyServerChanges({ type: 'delete', ids: Array.isArray(list) ? list : list.ids ?? [] }, { refresh: false });
+                else throw new Error(`The grid does not apply "${type}" events`);
+                refreshSoon();
+            }
+        });
+        this._stream = stream;
+        const finish = () => {
+            if (this._stream !== stream) return;
+            this._stream = null;
+            clearTimeout(this._streamRefresh);
+            this._streamRefresh = undefined;
+            this._setLoading(false);
+            if (this._hasLocalQuery()) this.refresh();
+        };
+        stream.done.then(state => {
+            finish();
+            this._showNotice(this.t('streamDone', { loaded: state.loaded }));
+            this.emit('streamEnd', state);
+        }, error => {
+            finish();
+            this._showNotice(error instanceof Error ? error.message : String(error));
+            this.emit('streamError', { error });
+        });
+        return stream;
+    }
+
     /* ---------------------------------------------------------------- duplicates */
 
     /**
@@ -3410,6 +3555,8 @@ export class IntelligentGrid {
 
     destroy(): void {
         if (this._scrollFrame) cancelAnimationFrame(this._scrollFrame);
+        this._offSocket?.();
+        this._stream?.close();
         clearTimeout(this._noticeTimer);
         if (this._onDocumentPointer) document.removeEventListener('pointerdown', this._onDocumentPointer);
         this.closePopover();

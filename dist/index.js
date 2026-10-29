@@ -52,7 +52,7 @@ var SorlaStore = class {
   idField;
   fields = [];
   db;
-  // documents by _id, SorlaDB 1.0 has no indexes and findOne() throws when nothing matches
+  // stored documents by _id, for synchronous reads of the live data (formulas, rendering)
   byId = /* @__PURE__ */ new Map();
   constructor({ sorla, database, collection = "rows", idField = null } = {}) {
     this.sorla = resolveSorla(sorla);
@@ -105,21 +105,41 @@ var SorlaStore = class {
     return this.byId.get(id)?._data;
   }
   /**
-   * SorlaDB: values are written on the document data instead of updateOne(). updateOne() scans the
-   * collection and replaces the document object, which is too slow for formula recalculation (one
-   * write per row of a column) and would invalidate the id index above. Needs an indexed bulk write.
+   * Writes values with updateOne() by _id: indexed, validated by a collection schema, and seen by
+   * other code that listens to the collection (watch(), events).
    * @return previous values of the changed fields
    */
   update(id, patch) {
     const data = this.get(id);
     if (!data) throw new Error(`Row "${id}" not found`);
     const previous = {};
+    const set = {};
     for (const [field, value] of Object.entries(patch)) {
       if (field === "_id") continue;
       previous[field] = data[field];
-      data[field] = encodeValue(value);
+      set[field] = encodeValue(value);
     }
+    if (!Object.keys(set).length) return previous;
+    this.collection.updateOne({ _id: id }, { $set: set });
+    this.refresh(id);
     return previous;
+  }
+  /**
+   * Writes a calculated value. SorlaDB: written on the document data, without updateOne(): formula
+   * recalculation writes one value per row of a column (100 000 for a column), where updateOne()
+   * would copy each document and cost about 2 ms per 1 000 rows. Calculated values are derived from
+   * the other fields, so no change event is emitted for them.
+   */
+  writeCalculated(data, field, value) {
+    data[field] = value;
+  }
+  /**
+   * SorlaDB: updateOne() stores a new object for the document (stored data is never changed in
+   * place), so the id map points to the new one. find({_id}) uses the collection index.
+   */
+  refresh(id) {
+    const [doc] = this.collection.find({ _id: id })._data;
+    if (doc) this.byId.set(id, doc);
   }
   /**
    * @return removed rows data, in collection order
@@ -153,11 +173,8 @@ var SorlaStore = class {
    * @return row data (copies)
    */
   query({ query = {}, predicates = [], sort = [], compare = compareCells } = {}) {
-    let documents = this.collection.find(query)._data;
-    if (predicates.length) {
-      documents = documents.filter((doc) => predicates.every((test) => test(doc._data)));
-    }
-    const rows = documents.map((doc) => doc._data);
+    let rows = this.collection.find(query).ids().map((id) => this.byId.get(String(id))._data);
+    if (predicates.length) rows = rows.filter((row) => predicates.every((test) => test(row)));
     if (!sort.length) return rows;
     return rows.sort((a, b) => {
       for (const entry of sort) {
@@ -389,6 +406,14 @@ var ChangeTracker = class {
   }
   reset() {
     this.forget(null);
+  }
+  /**
+   * A value that came from the server becomes the original of a field, so it is not reported as
+   * a change of the user (rows without tracked state are not affected).
+   */
+  rebase(id, field, value) {
+    const original = this.originals.get(id);
+    if (original) original.data[field] = value;
   }
 };
 function sameValue(a, b) {
@@ -3153,7 +3178,7 @@ var CalcEngine = class {
     const row = this.store.get(id);
     if (!row) return;
     const value = toCellResult(evaluate(compile(formula).ast, this.context(row, this.allValues, memo)));
-    row[field] = toStored(value);
+    this.store.writeCalculated(row, field, toStored(value));
   }
   computeColumn(field, ids) {
     const memo = /* @__PURE__ */ new Map();
@@ -3174,7 +3199,7 @@ var CalcEngine = class {
     for (const field of this.circular) {
       for (const id of ids) {
         const row = this.store.get(id);
-        if (row && this.formulaFor(id, field)) row[field] = ERRORS.CIRC;
+        if (row && this.formulaFor(id, field)) this.store.writeCalculated(row, field, ERRORS.CIRC);
       }
     }
     for (const field of this.order) this.computeColumn(field, ids);
@@ -3454,6 +3479,9 @@ var en = {
   collapseGroup: "Collapse group",
   blankGroup: "(blank)",
   importFile: "Import",
+  streamProgress: "Loading {loaded} of {total} rows\u2026",
+  streamLoaded: "{loaded} rows loaded\u2026",
+  streamDone: "{loaded} rows loaded",
   comment: "Comment",
   saveComment: "Save",
   deleteComment: "Delete",
@@ -3563,6 +3591,9 @@ var ptBR = {
   collapseGroup: "Recolher grupo",
   blankGroup: "(vazio)",
   importFile: "Importar",
+  streamProgress: "Carregando {loaded} de {total} linhas\u2026",
+  streamLoaded: "{loaded} linhas carregadas\u2026",
+  streamDone: "{loaded} linhas carregadas",
   comment: "Coment\xE1rio",
   saveComment: "Salvar",
   deleteComment: "Excluir",
@@ -4640,6 +4671,10 @@ var IntelligentGrid = class {
   _groupOf = /* @__PURE__ */ new Map();
   _groupEls = /* @__PURE__ */ new Map();
   _knownGroups = /* @__PURE__ */ new Set();
+  // server connections: WebSocket pushes (append.socket) and a running SSE stream (loadStream)
+  _offSocket = null;
+  _stream = null;
+  _streamRefresh;
   // min / max of columns with data bars, color scales or icon sets, over the view
   _stats = /* @__PURE__ */ new Map();
   // short message in the status bar (after an import)
@@ -4711,7 +4746,7 @@ var IntelligentGrid = class {
     this._collapseNew = this.options.groupsCollapsed;
     this._filters = { ...this.options.initialFilters };
     this._queryModel = normalizeQuery(this.options.initialQuery);
-    this._append = this.options.append ? { pageSize: 100, serverSide: true, threshold: 200, ...this.options.append, loaded: 0, hasMore: true, loading: false, request: 0 } : null;
+    this._append = this.options.append ? this._appendState(this.options.append) : null;
     this._setColumns(this.options.columns);
     this._build();
     if (tracking && tracking.form) this.bindForm(tracking.form, tracking.inputName);
@@ -5418,6 +5453,18 @@ var IntelligentGrid = class {
     this.emit("render", { rows: this._view.length });
   }
   /* ---------------------------------------------------------------- append / infinite scroll */
+  _appendState(options) {
+    const { socket, ...rest } = options;
+    const load = rest.load ?? (socket ? (params) => socket.load({ ...params }) : null);
+    if (!load) throw new Error("append needs load(params) or a socket");
+    if (socket) this._offSocket = socket.on("push", ({ message }) => this.applyServerChanges(message));
+    return { pageSize: 100, serverSide: true, threshold: 200, ...rest, load, loaded: 0, hasMore: true, loading: false, request: 0 };
+  }
+  /** Column filters and the advanced filter as one SorlaDB query (append mode where parameter). */
+  _whereQuery() {
+    const { query } = compileFilters(this._filters, this._columnMap, { locale: this.locale, testFormula: () => true });
+    return andQuery([query, this.toSorlaQuery()]);
+  }
   _resetAppend() {
     const append = this._append;
     if (!append) return;
@@ -5451,7 +5498,8 @@ var IntelligentGrid = class {
       filters: this.getFilters(),
       search: this._search,
       query: this.getQuery(),
-      sorlaQuery: this.toSorlaQuery()
+      sorlaQuery: this.toSorlaQuery(),
+      where: this._whereQuery()
     };
     this._setLoading(true);
     this.emit("loadStart", params);
@@ -6600,6 +6648,125 @@ var IntelligentGrid = class {
   _hideCommentTip() {
     this._commentTip?.remove();
   }
+  /* ---------------------------------------------------------------- server changes */
+  /**
+   * Applies rows or deletions that come from the server (SSE blocks, WebSocket pushes, polling):
+   * rows with a known id update it, the others are added, ids are removed. Server changes are not
+   * unsaved changes and cannot be undone. Fields the user edited and did not save keep the user's value.
+   * @return ids inserted, updated and removed
+   */
+  applyServerChanges(change, { refresh = true } = {}) {
+    const result = { inserted: [], updated: [], removed: [] };
+    if (change.type === "delete" || !change.rows && change.ids) {
+      const ids = (change.ids ?? []).map(String).filter((id) => this.store.has(id));
+      if (ids.length) {
+        const gone = new Set(ids);
+        this.store.remove(ids);
+        this.calc.forgetRows(ids);
+        this._tracker?.forget(gone);
+        ids.forEach((id) => this._selected.delete(id));
+        this._view = this._view.filter((row) => !gone.has(row._id));
+        this.calc.recalculate([], this.columns.map((c) => c.field));
+        result.removed = ids;
+      }
+    }
+    const fresh = [];
+    for (const row of change.rows ?? []) {
+      const raw = this.options.idField ? row[this.options.idField] : row._id;
+      const id = raw === void 0 || raw === null || raw === "" ? null : String(raw);
+      if (id === null || !this.store.has(id)) {
+        fresh.push(row);
+        continue;
+      }
+      const edited = this._tracker ? this._tracker.changedFields(id, this._readers) : {};
+      const patch = {};
+      for (const [field, value] of Object.entries(row)) {
+        if (field === "_id" || field in edited || this.getColumn(field)?.formula) continue;
+        patch[field] = value;
+        this._tracker?.rebase(id, field, encodeValue(value));
+      }
+      this.store.update(id, patch);
+      result.updated.push(id);
+    }
+    if (fresh.length) {
+      result.inserted = this._insert(fresh);
+      for (const id of result.inserted) this._view.push({ ...this.store.get(id) });
+    }
+    if (result.updated.length) {
+      const scope = this.calc.recalculate(result.updated, this.columns.map((c) => c.field));
+      this._syncRows(scope === "all" ? null : result.updated);
+    }
+    if (result.inserted.length || result.removed.length) {
+      if (refresh && this._hasLocalQuery()) this.refresh();
+      else {
+        this._renderBody();
+        this._renderFooter();
+        this._renderNavbar();
+      }
+    }
+    this.emit("serverChange", result);
+    return result;
+  }
+  _hasLocalQuery() {
+    if (this._append?.serverSide) return false;
+    return !!(this._sort.length || Object.keys(this._filters).length || this._search || this._queryModel || this._groupBy.length);
+  }
+  /**
+   * Loads rows from a Server-Sent Events endpoint in blocks (sorla-db 1.7.1+ stream protocol:
+   * meta, rows, delete, end). Rows show up as each block arrives; sorting and filters are applied
+   * again a few times per second and when the stream ends. The status bar shows the progress.
+   * @return the stream controller: done (a promise), state, close()
+   */
+  loadStream(url, options = {}) {
+    const Sorla = this.store.sorla.constructor;
+    if (typeof Sorla.stream !== "function") throw new Error("loadStream needs sorla-db 1.7.1 or later");
+    const { replace = true, onProgress, ...streamOptions } = options;
+    this._stream?.close();
+    if (replace) this.setData([]);
+    const refreshSoon = () => {
+      if (this._streamRefresh !== void 0 || !this._hasLocalQuery()) return;
+      this._streamRefresh = setTimeout(() => {
+        this._streamRefresh = void 0;
+        this.refresh();
+      }, 300);
+    };
+    const progress = (state) => {
+      this._notice = state.total ? this.t("streamProgress", { loaded: state.loaded, total: state.total }) : this.t("streamLoaded", { loaded: state.loaded });
+      this._renderNavbar();
+      onProgress?.(state);
+    };
+    this._setLoading(true);
+    const stream = Sorla.stream(url, {
+      ...streamOptions,
+      onProgress: progress,
+      apply: (type, data) => {
+        const list = Array.isArray(data) ? data : data;
+        if (type === "rows") this.applyServerChanges({ type: "rows", rows: Array.isArray(list) ? list : list.rows ?? [] }, { refresh: false });
+        else if (type === "delete") this.applyServerChanges({ type: "delete", ids: Array.isArray(list) ? list : list.ids ?? [] }, { refresh: false });
+        else throw new Error(`The grid does not apply "${type}" events`);
+        refreshSoon();
+      }
+    });
+    this._stream = stream;
+    const finish = () => {
+      if (this._stream !== stream) return;
+      this._stream = null;
+      clearTimeout(this._streamRefresh);
+      this._streamRefresh = void 0;
+      this._setLoading(false);
+      if (this._hasLocalQuery()) this.refresh();
+    };
+    stream.done.then((state) => {
+      finish();
+      this._showNotice(this.t("streamDone", { loaded: state.loaded }));
+      this.emit("streamEnd", state);
+    }, (error) => {
+      finish();
+      this._showNotice(error instanceof Error ? error.message : String(error));
+      this.emit("streamError", { error });
+    });
+    return stream;
+  }
   /* ---------------------------------------------------------------- duplicates */
   /**
    * Rows that repeat an earlier row in the given columns (the first of each set is not included).
@@ -7550,6 +7717,8 @@ var IntelligentGrid = class {
   /* ---------------------------------------------------------------- lifecycle */
   destroy() {
     if (this._scrollFrame) cancelAnimationFrame(this._scrollFrame);
+    this._offSocket?.();
+    this._stream?.close();
     clearTimeout(this._noticeTimer);
     if (this._onDocumentPointer) document.removeEventListener("pointerdown", this._onDocumentPointer);
     this.closePopover();

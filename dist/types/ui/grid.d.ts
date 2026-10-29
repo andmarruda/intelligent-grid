@@ -10,7 +10,7 @@ import type { ChangeSet, ChangeSummary, HistoryEntry } from '../core/changes.js'
 import { CalcEngine } from '../formula/engine.js';
 import type { FormulaFunction, FunctionDefinition, LazyFormulaFunction } from '../formula/functions.js';
 import type { FindMode } from './find-bar.js';
-import type { ChangeSource, Column, ConfirmRequest, ColumnDefinition, CellRef, CsvExportOptions, FillDirection, FindOptions, ChangeTrackingOptions, Filter, FilterModel, GridEvent, QueryNode, GridEventHandler, GridOptions, NavbarOptions, Row, SelectionMode, CellComment, DuplicateOptions, GroupInfo, ImportOptions, ImportResult, ReplaceOptions, SelectionOptions, SortEntry, Translator, XlsxExportOptions } from '../types.js';
+import type { ChangeSource, Column, ConfirmRequest, ColumnDefinition, CellRef, CsvExportOptions, FillDirection, FindOptions, ChangeTrackingOptions, Filter, FilterModel, GridEvent, QueryNode, GridEventHandler, GridOptions, NavbarOptions, Row, SelectionMode, CellComment, DuplicateOptions, GroupInfo, ImportOptions, ImportResult, LoadStreamOptions, ReplaceOptions, ServerChange, StreamController, SelectionOptions, SortEntry, Translator, XlsxExportOptions } from '../types.js';
 type ResolvedOptions = Required<Omit<GridOptions, 'selection' | 'navbar' | 'sort' | 'sorla' | 'database' | 'currency' | 'locale' | 'changeTracking' | 'confirm'>> & {
     confirm?: GridOptions['confirm'];
     changeTracking: ChangeTrackingOptions | false;
@@ -68,6 +68,9 @@ export declare class IntelligentGrid {
     private _groupOf;
     private _groupEls;
     private _knownGroups;
+    private _offSocket;
+    private _stream;
+    private _streamRefresh;
     private _stats;
     private _notice;
     private _comments;
@@ -276,6 +279,9 @@ export declare class IntelligentGrid {
      * Re-runs the query (filters + search + sort) through SorlaDB and renders from the top.
      */
     refresh(): void;
+    private _appendState;
+    /** Column filters and the advanced filter as one SorlaDB query (append mode where parameter). */
+    private _whereQuery;
     private _resetAppend;
     /**
      * Loads the next page from options.append.load({offset, limit, sort, filters, search}).
@@ -391,6 +397,27 @@ export declare class IntelligentGrid {
     editComment(id: string, field: string): void;
     private _showCommentTip;
     private _hideCommentTip;
+    /**
+     * Applies rows or deletions that come from the server (SSE blocks, WebSocket pushes, polling):
+     * rows with a known id update it, the others are added, ids are removed. Server changes are not
+     * unsaved changes and cannot be undone. Fields the user edited and did not save keep the user's value.
+     * @return ids inserted, updated and removed
+     */
+    applyServerChanges(change: ServerChange, { refresh }?: {
+        refresh?: boolean;
+    }): {
+        inserted: string[];
+        updated: string[];
+        removed: string[];
+    };
+    private _hasLocalQuery;
+    /**
+     * Loads rows from a Server-Sent Events endpoint in blocks (sorla-db 1.7.1+ stream protocol:
+     * meta, rows, delete, end). Rows show up as each block arrives; sorting and filters are applied
+     * again a few times per second and when the stream ends. The status bar shows the progress.
+     * @return the stream controller: done (a promise), state, close()
+     */
+    loadStream(url: string, options?: LoadStreamOptions): StreamController;
     /**
      * Rows that repeat an earlier row in the given columns (the first of each set is not included).
      * @return ids, in view order

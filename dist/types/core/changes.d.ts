@@ -116,6 +116,11 @@ export declare class ChangeTracker {
      */
     forget(ids: Set<string> | null): void;
     reset(): void;
+    /**
+     * A value that came from the server becomes the original of a field, so it is not reported as
+     * a change of the user (rows without tracked state are not affected).
+     */
+    rebase(id: string, field: string, value: unknown): void;
 }
 export {};
 //# sourceMappingURL=changes.d.ts.map

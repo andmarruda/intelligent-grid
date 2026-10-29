@@ -245,6 +245,15 @@ export class ChangeTracker {
     reset(): void {
         this.forget(null);
     }
+
+    /**
+     * A value that came from the server becomes the original of a field, so it is not reported as
+     * a change of the user (rows without tracked state are not affected).
+     */
+    rebase(id: string, field: string, value: unknown): void {
+        const original = this.originals.get(id);
+        if (original) original.data[field] = value;
+    }
 }
 
 function sameValue(a: unknown, b: unknown): boolean {

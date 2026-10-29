@@ -190,7 +190,7 @@ export class CalcEngine {
         const row = this.store.get(id);
         if (!row) return;
         const value = toCellResult(evaluate(compile(formula).ast, this.context(row, this.allValues, memo)));
-        row[field] = toStored(value);
+        this.store.writeCalculated(row, field, toStored(value));
     }
 
     private computeColumn(field: string, ids: string[]): void {
@@ -215,7 +215,7 @@ export class CalcEngine {
         for (const field of this.circular) {
             for (const id of ids) {
                 const row = this.store.get(id);
-                if (row && this.formulaFor(id, field)) row[field] = ERRORS.CIRC;
+                if (row && this.formulaFor(id, field)) this.store.writeCalculated(row, field, ERRORS.CIRC);
             }
         }
         for (const field of this.order) this.computeColumn(field, ids);

@@ -413,6 +413,11 @@ export interface AppendLoadParams {
     query: QueryNode | null;
     /** The advanced filter as SorlaDB / MongoDB JSON ({} when none). */
     sorlaQuery: Record<string, unknown>;
+    /**
+     * Column filters and the advanced filter together as one SorlaDB / MongoDB JSON query, ready for
+     * collection.find(where) on the server. Formula filters and the search are not part of it.
+     */
+    where: Record<string, unknown>;
 }
 
 export interface AppendResult {
@@ -422,7 +427,13 @@ export interface AppendResult {
 }
 
 export interface AppendOptions {
-    load: (params: AppendLoadParams) => Promise<AppendResult | Record<string, unknown>[]>;
+    /** Loads a page; optional when socket is given. */
+    load?: (params: AppendLoadParams) => Promise<AppendResult | Record<string, unknown>[]>;
+    /**
+     * A sorla-db WebSocket connection (sorla.connect(url)): pages come from socket.load(params) and
+     * rows the server pushes are applied to the grid.
+     */
+    socket?: SorlaRemote;
     pageSize?: number;
     /** Pixels from the bottom that trigger the next page. */
     threshold?: number;
@@ -456,6 +467,54 @@ export interface XlsxExportOptions extends ExportOptions {
 /** Constructor of the sorla-db library, or an instance of it. */
 export type SorlaSource = (new () => SorlaInstance) | SorlaInstance;
 
+/** What the grid uses from a sorla-db WebSocket connection (sorla.connect(url), sorla-db 1.6+). */
+export interface SorlaRemote {
+    load(params: Record<string, unknown>): Promise<{ rows: Record<string, unknown>[]; hasMore?: boolean; total?: number }>;
+    on(event: 'push', listener: (event: { message: ServerChange }) => void): () => void;
+}
+
+/** Rows or deletions sent by a server: SSE blocks, WebSocket pushes, or your own code. */
+export interface ServerChange {
+    type?: 'rows' | 'delete';
+    rows?: Record<string, unknown>[];
+    ids?: unknown[];
+}
+
+export interface StreamState {
+    loaded: number;
+    total: number | null;
+    blocks: number;
+    errors: number;
+    lastEventId: string | null;
+    finished: boolean;
+}
+
+export interface StreamController {
+    readonly done: Promise<StreamState>;
+    readonly state: StreamState;
+    close(): void;
+}
+
+/** grid.loadStream(url, options): sorla-db stream options plus replace. */
+export interface LoadStreamOptions {
+    /** Replace the rows (default true) or add to them. */
+    replace?: boolean;
+    transport?: 'fetch' | 'eventsource';
+    headers?: Record<string, string>;
+    method?: string;
+    body?: unknown;
+    credentials?: 'omit' | 'same-origin' | 'include';
+    withCredentials?: boolean;
+    retry?: number;
+    maxRetries?: number;
+    lastEventId?: string | null;
+    onProgress?: (state: StreamState) => void;
+    onError?: (error: Error) => void;
+    /** Your own fetch or EventSource implementation. */
+    fetch?: typeof fetch;
+    EventSource?: unknown;
+}
+
 export interface SorlaInstance {
     useDb(name: string): void;
     readonly db: SorlaDatabase;
@@ -472,6 +531,9 @@ export interface SorlaDocument {
 }
 
 export interface SorlaCursor {
+    /** _id of each match, without copies (sorla-db 1.6+). */
+    ids(): unknown[];
+    /** The stored documents of the matches (internal). */
     _data: SorlaDocument[];
 }
 
@@ -480,6 +542,7 @@ export interface SorlaCollection {
     insertOne(document: Record<string, unknown>): unknown;
     insertMany(documents: Record<string, unknown>[]): unknown[];
     deleteMany(filter: Record<string, unknown>): { deletedCount: number };
+    updateOne(filter: Record<string, unknown>, update: Record<string, unknown>): { matchedCount: number; modifiedCount: number };
     find(query: Record<string, unknown>): SorlaCursor;
     count(query?: Record<string, unknown>): number;
     on(event: 'insert' | 'update' | 'replace' | 'delete' | 'change', listener: (event: { type: string; ids: unknown[] }) => void): () => void;

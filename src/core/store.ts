@@ -1,9 +1,10 @@
 /**
  * SorlaStore: the only place where Intelligent Grid talks to SorlaDB.
  *
- * Rows live as documents of a SorlaDB collection (sorla-db 1.5+): inserts use insertMany(), deletes
- * deleteMany(), filtering collection.find() with the Sorla query language. The two places that still
- * go around the library are marked "SorlaDB:" with the reason (see docs/sorla-db.md).
+ * Rows live as documents of a SorlaDB collection (sorla-db 1.7.1+): inserts use insertMany(), edits
+ * updateOne() by _id (indexed, with change events), deletes deleteMany(), filtering find() with the
+ * Sorla query language and cursor.ids() (no copies). The places that still go around the library
+ * are marked "SorlaDB:" with the reason (see docs/sorla-db.md).
  */
 import { isErrorCode } from '../formula/errors.ts';
 import type { RowData, SorlaCollection, SorlaDatabase, SorlaDocument, SorlaInstance, SorlaSource, SortEntry, StoredValue } from '../types.ts';
@@ -60,7 +61,7 @@ export class SorlaStore {
     idField: string | null;
     fields: string[] = [];
     db: SorlaDatabase;
-    // documents by _id, SorlaDB 1.0 has no indexes and findOne() throws when nothing matches
+    // stored documents by _id, for synchronous reads of the live data (formulas, rendering)
     private byId = new Map<string, SorlaDocument>();
 
     constructor({ sorla, database, collection = 'rows', idField = null }: StoreOptions = {}) {
@@ -123,21 +124,43 @@ export class SorlaStore {
     }
 
     /**
-     * SorlaDB: values are written on the document data instead of updateOne(). updateOne() scans the
-     * collection and replaces the document object, which is too slow for formula recalculation (one
-     * write per row of a column) and would invalidate the id index above. Needs an indexed bulk write.
+     * Writes values with updateOne() by _id: indexed, validated by a collection schema, and seen by
+     * other code that listens to the collection (watch(), events).
      * @return previous values of the changed fields
      */
     update(id: string, patch: Record<string, unknown>): Record<string, unknown> {
         const data = this.get(id);
         if (!data) throw new Error(`Row "${id}" not found`);
         const previous: Record<string, unknown> = {};
+        const set: Record<string, unknown> = {};
         for (const [field, value] of Object.entries(patch)) {
             if (field === '_id') continue;
             previous[field] = data[field];
-            data[field] = encodeValue(value);
+            set[field] = encodeValue(value);
         }
+        if (!Object.keys(set).length) return previous;
+        this.collection.updateOne({ _id: id }, { $set: set });
+        this.refresh(id);
         return previous;
+    }
+
+    /**
+     * Writes a calculated value. SorlaDB: written on the document data, without updateOne(): formula
+     * recalculation writes one value per row of a column (100 000 for a column), where updateOne()
+     * would copy each document and cost about 2 ms per 1 000 rows. Calculated values are derived from
+     * the other fields, so no change event is emitted for them.
+     */
+    writeCalculated(data: RowData, field: string, value: unknown): void {
+        data[field] = value;
+    }
+
+    /**
+     * SorlaDB: updateOne() stores a new object for the document (stored data is never changed in
+     * place), so the id map points to the new one. find({_id}) uses the collection index.
+     */
+    private refresh(id: string): void {
+        const [doc] = this.collection.find({ _id: id })._data;
+        if (doc) this.byId.set(id, doc);
     }
 
     /**
@@ -177,12 +200,9 @@ export class SorlaStore {
      * @return row data (copies)
      */
     query({ query = {}, predicates = [], sort = [], compare = compareCells }: QueryOptions = {}): RowData[] {
-        let documents = this.collection.find(query)._data;
-        if (predicates.length) {
-            documents = documents.filter(doc => predicates.every(test => test(doc._data)));
-        }
-
-        const rows = documents.map(doc => doc._data);
+        // ids() copies nothing (sorla-db 1.6+): the rows are the live data of the id map
+        let rows = this.collection.find(query).ids().map(id => this.byId.get(String(id))!._data);
+        if (predicates.length) rows = rows.filter(row => predicates.every(test => test(row)));
         if (!sort.length) return rows;
 
         // SorlaDB: cursor.sort() follows MongoDB's order (blanks first); the grid keeps Excel's order,
