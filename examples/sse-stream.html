@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>SSE loading in blocks · Intelligent Grid</title>
+    <link rel="stylesheet" href="../dist/intelligent-grid.css">
+    <link rel="stylesheet" href="./shared.css">
+    <style>
+        progress { width: 240px; }
+    </style>
+</head>
+<body>
+<main>
+    <nav class="back"><a href="./index.html">← All examples</a></nav>
+    <header>
+        <h1>Loading 100 000 rows in blocks with Server-Sent Events</h1>
+        <p><code>grid.loadStream('/api/orders/stream')</code> opens one Server-Sent Events stream; the demo backend sends the orders in blocks of 5 000 (<code>event: rows</code>, each with an <code>id:</code>). The rows show up as each block arrives and you can scroll, sort and filter while it loads. If the connection drops, the client reconnects with <code>Last-Event-ID</code> and the server continues with the next block. Run <code>npm run demo</code>.</p>
+    </header>
+    <div class="toolbar">
+        <button id="start">Load with SSE</button>
+        <button id="stop">close()</button>
+        <progress id="progress" value="0" max="1"></progress>
+        <span id="stats"></span>
+    </div>
+    <div id="grid"></div>
+    <pre class="log" id="log"></pre>
+</main>
+<script src="../node_modules/sorla-db/dist/sorla.min.js"></script>
+<script type="module">
+    import { IntelligentGrid } from '../dist/index.js';
+    import { STATUS, logger } from './data.js';
+
+    const log = logger(document.querySelector('#log'));
+    const grid = new IntelligentGrid('#grid', {
+        locale: 'en-US', idField: 'id', editable: true, height: 480,
+        initialSort: [{ field: 'id', dir: 'asc' }],
+        columns: [
+            { field: 'id', title: '#', type: 'integer', width: 80, editable: false },
+            { field: 'product', title: 'Product', width: 150 },
+            { field: 'city', title: 'City', width: 150 },
+            { field: 'status', title: 'Status', options: STATUS, width: 110 },
+            { field: 'qty', title: 'Qty', type: 'integer', width: 90, footer: 'sum' },
+            { field: 'price', title: 'Price', type: 'currency', currency: 'USD', width: 110 },
+            { field: 'total', title: 'Total', type: 'currency', currency: 'USD', width: 130, formula: '=[@qty]*[@price]' },
+            { field: 'due', title: 'Due', type: 'date', width: 120 }
+        ]
+    });
+
+    let stream = null;
+    document.querySelector('#start').onclick = () => {
+        const started = performance.now();
+        stream = grid.loadStream('/api/orders/stream', {
+            onProgress: ({ loaded, total, blocks }) => {
+                document.querySelector('#progress').value = total ? loaded / total : 0;
+                document.querySelector('#stats').textContent = `${loaded.toLocaleString()} of ${(total ?? 0).toLocaleString()} rows · ${blocks} blocks · ${Math.round(performance.now() - started)} ms`;
+            },
+            onError: error => log('reconnecting', error.message)
+        });
+        stream.done.then(state => log('done', state), error => log('failed', error.message));
+    };
+    document.querySelector('#stop').onclick = () => stream?.close();
+</script>
+</body>
+</html>
