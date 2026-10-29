@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Intelligent Grid benchmark</title>
+    <link rel="stylesheet" href="../dist/intelligent-grid.css">
+    <style>body { margin: 0; font-family: system-ui, sans-serif; } #grid { width: 1200px; }</style>
+</head>
+<body>
+<div id="grid"></div>
+<script src="../node_modules/sorla-db/dist/sorla.min.js"></script>
+<script type="module">
+    import { IntelligentGrid } from '../dist/index.js';
+
+    const frame = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const time = async fn => {
+        const start = performance.now();
+        await fn();
+        await frame();
+        return Math.round(performance.now() - start);
+    };
+
+    // deterministic data
+    let seed = 1;
+    const random = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    const cities = ['Ribeirão Preto', 'São Paulo', 'Curitiba', 'Recife', 'Porto Alegre', 'Belo Horizonte'];
+    const status = ['open', 'shipped', 'done'];
+    function rows(count) {
+        return Array.from({ length: count }, (_, i) => ({
+            id: i + 1,
+            name: `Customer ${i + 1}`,
+            city: cities[Math.floor(random() * cities.length)],
+            status: status[Math.floor(random() * status.length)],
+            qty: 1 + Math.floor(random() * 50),
+            price: Math.round(random() * 100000) / 100,
+            discount: Math.floor(random() * 4) * 0.05,
+            due: new Date(Date.UTC(2026, 0, 1 + Math.floor(random() * 365))).toISOString().slice(0, 10),
+            paid: random() > 0.5,
+            notes: random() > 0.7 ? 'Call before delivery' : ''
+        }));
+    }
+
+    window.runBenchmark = async (count) => {
+        const data = rows(count);
+        const result = { rows: count };
+        let grid;
+        result.open = await time(() => {
+            grid = new IntelligentGrid('#grid', {
+                sorla: window.sorla, locale: 'en-US', idField: 'id', data, height: 600, editable: true,
+                columns: [
+                    { field: 'id', type: 'integer', width: 80 },
+                    { field: 'name', width: 160 },
+                    { field: 'city', width: 140 },
+                    { field: 'status', options: status, width: 100 },
+                    { field: 'qty', type: 'integer', width: 80, footer: 'sum' },
+                    { field: 'price', type: 'currency', currency: 'USD', width: 110 },
+                    { field: 'discount', type: 'percent', width: 90 },
+                    { field: 'total', type: 'currency', currency: 'USD', formula: '=[@qty]*[@price]*(1-[@discount])', footer: 'sum', width: 120 },
+                    { field: 'share', type: 'percent', decimals: 3, formula: '=[@total]/SUM([total])', width: 100 },
+                    { field: 'due', type: 'date', width: 110 },
+                    { field: 'paid', type: 'boolean', width: 70 },
+                    { field: 'notes', width: 200 }
+                ]
+            });
+        });
+        result.filter = await time(() => grid.setFilter('qty', { conditions: [{ op: 'gt', value: 25 }] }));
+        result.textFilter = await time(() => grid.setFilter('name', { conditions: [{ op: 'contains', value: '7' }] }));
+        result.clearFilters = await time(() => grid.clearFilters());
+        result.sort = await time(() => grid.setSort([{ field: 'city', dir: 'asc' }, { field: 'total', dir: 'desc' }]));
+        result.editWithRecalc = await time(() => grid.setCellValue(grid.getRows('filtered')[0]._id, 'qty', 7));
+
+        // scroll to the bottom in steps, measuring frame times
+        const scroller = grid.root.querySelector('.ig-scroll');
+        const frames = [];
+        let last = performance.now();
+        const steps = 120;
+        for (let i = 1; i <= steps; i++) {
+            scroller.scrollTop = (scroller.scrollHeight - scroller.clientHeight) * (i / steps);
+            await new Promise(resolve => requestAnimationFrame(resolve));
+            const now = performance.now();
+            frames.push(now - last);
+            last = now;
+            // let lazy rendering catch up, like a user pausing while scrolling
+            if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2) await frame();
+        }
+        frames.sort((a, b) => a - b);
+        result.scrollAvgFrameMs = Math.round(frames.reduce((a, b) => a + b, 0) / frames.length * 10) / 10;
+        result.scrollP95FrameMs = Math.round(frames[Math.floor(frames.length * 0.95)] * 10) / 10;
+        result.domRows = grid.root.querySelectorAll('tbody tr').length;
+        result.domCells = grid.root.querySelectorAll('tbody td').length;
+        result.heapMB = performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : null;
+        grid.destroy();
+        return result;
+    };
+    window.benchReady = true;
+</script>
+</body>
+</html>

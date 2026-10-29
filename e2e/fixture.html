@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Intelligent Grid e2e</title>
+    <link rel="stylesheet" href="../dist/intelligent-grid.css">
+    <style>body { margin: 0; font-family: system-ui, sans-serif; } #grid { width: 900px; }</style>
+</head>
+<body>
+<div id="grid"></div>
+<script src="../node_modules/sorla-db/dist/sorla.min.js"></script>
+<script type="module">
+    import * as lib from '../dist/index.js';
+    window.lib = lib;
+    window.rows = (count, extra = () => ({})) => Array.from({ length: count }, (_, i) => ({ id: i + 1, name: `Row ${i + 1}`, qty: i % 100, ...extra(i) }));
+    window.make = options => {
+        window.ig?.destroy();
+        document.querySelector('#grid').innerHTML = '';
+        window.ig = new lib.IntelligentGrid('#grid', { sorla: window.sorla, locale: 'en-US', idField: 'id', height: 400, ...options });
+        return true;
+    };
+    window.ready = true;
+</script>
+</body>
+</html>
