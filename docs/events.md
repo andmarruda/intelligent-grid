@@ -68,6 +68,8 @@ not stop the other handlers.
 | `sortChange` | `{ sort }` |
 | `filterChange` | `{ field, filter, filters }` (`field` is null after `setFilters`) |
 | `searchChange` | `{ search }` |
+| `queryChange` | `{ query, sorlaQuery }`: the [advanced filter](query-builder.md) changed |
+| `queryBuilderOpen` / `queryBuilderClose` | `{}` |
 | `columnResize` | `{ field, width }` |
 | `columnVisibilityChange` | `{ field, visible }` |
 
@@ -87,7 +89,7 @@ See [Change tracking](change-tracking.md).
 |---|---|
 | `beforeExport` ✋ | `{ format: 'csv' \| 'xlsx', options }`: options are writable |
 | `export` | `{ format, options }` |
-| `loadStart` | `{ offset, limit, sort, filters, search }` |
+| `loadStart` | `{ offset, limit, sort, filters, search, query, sorlaQuery }` |
 | `loadEnd` | same plus `{ rows, hasMore, total }` |
 | `loadError` | same plus `{ error }` |
 | `scrollEnd` | `{}`: scrolled to the end with nothing left to load |

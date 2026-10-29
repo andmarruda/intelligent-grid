@@ -62,8 +62,11 @@ All ids are strings. "Row" values returned to you are copies: changing them does
 | `getFilters()` | Current filter model |
 | `setFilter(field, filter \| null)` | One column |
 | `setFilters(model)` | Replace every filter |
-| `clearFilters()` | Filters and search |
+| `clearFilters()` | Column filters, search and the advanced filter |
 | `setSearch(text)` | Global search |
+| `getQuery()` / `setQuery(node \| null)` | [Advanced filter](query-builder.md) model |
+| `toSorlaQuery()` / `fromSorlaQuery(json)` | The advanced filter as SorlaDB / MongoDB JSON, and back |
+| `toggleQueryBuilder(open?)` | Open / close the builder panel |
 
 ## Selection
 
@@ -126,6 +129,7 @@ import {
     SorlaStore, compareCells,              // SorlaDB adapter
     ChangeTracker,                         // change tracking
     compileFilters, operatorsFor,          // filter model → SorlaDB query
+    compileQuery, toSorlaQuery, fromSorlaQuery, describeQuery, normalizeQuery,   // query builder model
     TYPES, formatCell, parseInput, validateValue, excelFormatCode,
     CalcEngine, compile, evaluate, isFormula, parse, toExcelFormula, collectDependencies,
     defineFunction, defineLazyFunction, listFunctions, formatValue,

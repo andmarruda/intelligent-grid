@@ -24,6 +24,7 @@ new IntelligentGrid(target: string | HTMLElement, options: GridOptions)
 | `sort` | `{ mode }` | `{ mode: 'modifier' }` | `'modifier'`: Shift/Ctrl+click adds sort columns; `'toggle'`: every click adds |
 | `initialSort` | `SortEntry[]` | `[]` | e.g. `[{ field: 'due', dir: 'asc' }]` |
 | `initialFilters` | `FilterModel` | `{}` | See [filter model](sorting-filtering.md#filter-model) |
+| `initialQuery` | `QueryNode \| null` | `null` | [Advanced filter](query-builder.md) applied on load |
 | `selection` | `{ mode, checkbox, selectOnClick } \| false` | `{ mode: 'multiple', checkbox: true }` | See [Selection](selection.md) |
 | `navbar` | `NavbarOptions \| false` | search, filters, columns, export | See [Navbar](navbar.md) |
 | `statusBar` | `boolean` | `true` | "x of y rows · n selected" |

@@ -138,6 +138,24 @@ export interface FilterCondition {
     value?: unknown;
     value2?: unknown;
 }
+/** Operators of the query builder; eq / ne are exact (SorlaDB $eq / $ne), in / nin take `values`. */
+export type QueryOperator = 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte' | 'between' | 'in' | 'nin' | 'contains' | 'notContains' | 'startsWith' | 'endsWith' | 'empty' | 'notEmpty';
+export interface QueryRule {
+    type: 'rule';
+    field: string;
+    op: QueryOperator;
+    value?: unknown;
+    value2?: unknown;
+    values?: unknown[];
+}
+export interface QueryGroup {
+    type: 'group';
+    join: 'and' | 'or';
+    /** Negates the whole group (NOT). */
+    not?: boolean;
+    children: QueryNode[];
+}
+export type QueryNode = QueryRule | QueryGroup;
 export interface Filter {
     /** Checklist of stored values ('' = blanks). */
     values?: unknown[];
@@ -170,6 +188,8 @@ export interface NavbarOptions {
     delete?: boolean;
     /** "N changes" badge and a "Discard changes" button while there are unsaved changes (default true). */
     changes?: boolean;
+    /** "Advanced filter" button opening the visual query builder (default true). */
+    query?: boolean;
     items?: NavbarItem[];
 }
 export interface ConfirmRequest {
@@ -202,6 +222,10 @@ export interface AppendLoadParams {
     sort: SortEntry[];
     filters: FilterModel;
     search: string;
+    /** Advanced filter (query builder model), null when none. */
+    query: QueryNode | null;
+    /** The advanced filter as SorlaDB / MongoDB JSON ({} when none). */
+    sorlaQuery: Record<string, unknown>;
 }
 export interface AppendResult {
     rows: Record<string, unknown>[];
@@ -278,6 +302,8 @@ export interface GridOptions {
     };
     initialSort?: SortEntry[];
     initialFilters?: FilterModel;
+    /** Advanced filter applied on load (query builder model). */
+    initialQuery?: QueryNode | null;
     selection?: Partial<SelectionOptions> | false;
     navbar?: NavbarOptions | false;
     statusBar?: boolean;

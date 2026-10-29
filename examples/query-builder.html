@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Advanced filter · Intelligent Grid</title>
+    <link rel="stylesheet" href="../dist/intelligent-grid.css">
+    <link rel="stylesheet" href="./shared.css">
+</head>
+<body>
+<main>
+    <nav class="back"><a href="./index.html">← All examples</a></nav>
+    <header>
+        <h1>Advanced filter (query builder)</h1>
+        <p>Click <b>Filtro avançado</b> in the navbar, combine rules in nested <b>E / OU</b> groups (tick <b>Não</b> to negate a group) and watch the SorlaDB <code>find()</code> JSON being built. The buttons load ready-made queries; the last one runs the generated JSON directly in a separate <code>sorla.find()</code>, outside the grid.</p>
+    </header>
+    <div class="toolbar">
+        <button id="example">idade ≥ 30 E (produto = Café OU cidade em [São Paulo, Recife])</button>
+        <button id="nested">NÃO pago E (total > 300 OU (vencimento &lt; 2026-04-01 E status = aberto))</button>
+        <button id="text">produto começa com "p" (avaliado pelo grid)</button>
+        <button id="run">Rodar o JSON direto no SorlaDB</button>
+    </div>
+    <div id="grid"></div>
+    <section>
+        <h2>grid.toSorlaQuery()</h2>
+        <pre class="log" id="json"></pre>
+        <pre class="log" id="direct"></pre>
+    </section>
+</main>
+<script src="../node_modules/sorla-db/dist/sorla.min.js"></script>
+<script type="module">
+    import { IntelligentGrid } from '../dist/index.js';
+    import { orders, CITIES, STATUS } from './data.js';
+
+    const data = orders(250).map(row => ({ ...row, age: 18 + (row.id * 7) % 50, total: Math.round(row.qty * row.price * 100) / 100 }));
+
+    const grid = new IntelligentGrid('#grid', {
+        locale: 'pt-BR',
+        idField: 'id',
+        data,
+        height: 380,
+        navbar: { title: 'Pedidos', export: ['csv', 'xlsx'] },
+        columns: [
+            { field: 'id', title: '#', type: 'integer', width: 70 },
+            { field: 'product', title: 'Produto' },
+            { field: 'city', title: 'Cidade', options: CITIES },
+            { field: 'age', title: 'Idade', type: 'integer', width: 80 },
+            { field: 'total', title: 'Total', type: 'currency', footer: 'sum' },
+            { field: 'due', title: 'Vencimento', type: 'date' },
+            { field: 'paid', title: 'Pago', type: 'boolean', width: 80 },
+            { field: 'status', title: 'Status', options: STATUS.map(s => ({ value: s.value, label: { open: 'Aberto', shipped: 'Enviado', done: 'Concluído' }[s.value] })) }
+        ],
+        on: { queryChange: e => show(e.grid) }
+    });
+
+    function show(g) {
+        document.querySelector('#json').textContent = JSON.stringify(g.toSorlaQuery(), null, 2) || '{}';
+        document.querySelector('#direct').textContent = '';
+    }
+
+    const rule = (field, op, value, extra = {}) => ({ type: 'rule', field, op, value, ...extra });
+    document.querySelector('#example').addEventListener('click', () => grid.setQuery({
+        type: 'group', join: 'and', children: [
+            rule('age', 'gte', 30),
+            { type: 'group', join: 'or', children: [rule('product', 'eq', 'Café'), rule('city', 'in', undefined, { values: ['São Paulo', 'Recife'] })] }
+        ]
+    }));
+    document.querySelector('#nested').addEventListener('click', () => grid.setQuery({
+        type: 'group', join: 'and', children: [
+            rule('paid', 'eq', false),
+            { type: 'group', join: 'or', children: [
+                rule('total', 'gt', 300),
+                { type: 'group', join: 'and', children: [rule('due', 'lt', '2026-04-01'), rule('status', 'eq', 'open')] }
+            ] }
+        ]
+    }));
+    document.querySelector('#text').addEventListener('click', () => grid.setQuery(rule('product', 'startsWith', 'p')));
+
+    // the showcase: the generated JSON is a plain SorlaDB query, run it on its own collection
+    const standalone = new window.sorla();
+    standalone.useDb('showcase');
+    standalone.db.createCollection('orders');
+    for (const row of data) standalone.db.orders.insertOne({ ...row, due: row.due ?? '' });
+    document.querySelector('#run').addEventListener('click', () => {
+        const query = grid.toSorlaQuery();
+        try {
+            const found = standalone.db.orders.find(query).length;
+            document.querySelector('#direct').textContent =
+                `sorla.db.orders.find(query).length = ${found}\ngrid rows shown          = ${grid.getRows('filtered').length}`;
+        } catch (error) {
+            document.querySelector('#direct').textContent = `SorlaDB: ${error.message}\n(text rules use $regex, which SorlaDB does not support yet; the grid evaluates them itself)`;
+        }
+    });
+
+    show(grid);
+    grid.toggleQueryBuilder(true);
+    window.grid = grid;
+</script>
+</body>
+</html>

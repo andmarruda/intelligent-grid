@@ -62,6 +62,7 @@ palette, redefine the variables inside your own `@media (prefers-color-scheme: d
 | `ig-footer` | `tfoot tr` | footer row |
 | `ig-is-loading` | `.ig` | append mode request in flight |
 | `ig-modal-backdrop`, `ig-modal`, `ig-modal-title`, `ig-modal-message`, `ig-modal-actions` | confirmation modal | |
+| `ig-qb`, `ig-qb-group` (`data-join`, `ig-qb-negated`), `ig-qb-rule` (`ig-qb-incomplete`), `ig-qb-json`, `ig-chip-query` | advanced filter | |
 
 Plus your own: `rowClass`, `column.cellClass`, `column.headerClass`, and `className` in
 [conditional formats](formulas.md#conditional-formats).

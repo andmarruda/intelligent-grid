@@ -9,6 +9,7 @@ src/
 │   ├── filters.ts           filter model → SorlaDB query + JS predicates
 │   ├── columns.ts           column schema: defaults, formatting, parsing, validation
 │   ├── changes.ts           ChangeTracker: inserted/updated/deleted rows and history
+│   ├── query.ts             query builder model → SorlaDB query, JSON in/out, description
 │   └── events.ts            event emitter (cancelable "before*" events)
 ├── formula/
 │   ├── parser.ts            tokenizer + Pratt parser, dependency collection, A1 printer
@@ -27,6 +28,8 @@ src/
 └── ui/
     ├── grid.ts              IntelligentGrid: state, rendering, interaction, public API
     ├── filter-menu.ts       AutoFilter popover
+    ├── query-builder.ts     advanced filter panel
+    ├── modal.ts             confirmation modal
     ├── editors.ts           built-in cell editors
     └── dom.ts               tiny element factory (text only through textContent)
 ```
@@ -57,9 +60,10 @@ Edits go the other way: editor → `parseInput` → `validateValue` → hooks/ev
 ## How SorlaDB is used
 
 - **Storage**: every row is a document of collection `rows` in a database per grid. `_id` is the row id.
-- **Queries**: the filter model compiles to the Sorla query language. Each filtered field becomes
-  `{ field: { $in | $eq | $ne | $gt | $gte | $lt | $lte: ... } }`; several fields form the implicit
-  AND of a top-level query object. This is the part of the query language that works reliably in SorlaDB 1.0.
+- **Queries**: column filters and the advanced filter compile to the Sorla query language
+  (`$eq $ne $gt $gte $lt $lte $in $nin`, nested `$and / $or / $nor`), combined with `$and`.
+  Every subtree SorlaDB can express runs as one `collection.find()`; only text matching (no `$regex`
+  in SorlaDB yet), formulas and search run as predicates. Nested queries need sorla-db 1.1+.
 - **Calculated values** are stored in the documents, so `find()` can filter on them.
 - **Workarounds** for missing or broken SorlaDB 1.0 features (update, delete, sort, null values…)
   are isolated in `store.ts`, each one marked `SorlaDB 1.0 workaround`. See [SorlaDB improvements](sorla-db.md).

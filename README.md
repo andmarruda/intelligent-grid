@@ -4,7 +4,7 @@ Excel-like data grid for the browser, written in TypeScript and powered by
 [SorlaDB](https://github.com/sysborg/sorla-db). No runtime dependencies besides SorlaDB.
 
 - **Multi-column sorting** by clicking headers (Shift/Ctrl+click adds columns)
-- **Excel AutoFilter** (value checklist + And/Or conditions), global search, formula filters, and a **navbar** with filter chips, column chooser, add/delete, export and your own buttons
+- **Excel AutoFilter** (value checklist + And/Or conditions), global search, formula filters, a **visual query builder** (nested AND / OR / NOT, shows the SorlaDB `find()` JSON), and a **navbar** with filter chips, column chooser, add/delete, export and your own buttons
 - **Append mode**: infinite scroll loading pages from your API
 - **Editing** with typed editors, locale-aware parsing, validation, cancelable events, custom editors, copy/paste
 - **Selection**: single or multiple, checkboxes, ranges, bulk actions
@@ -18,7 +18,7 @@ values are stored in the documents, so they sort and filter like any other field
 ## Quick start
 
 ```bash
-npm install intelligent-grid sorla-db
+npm install intelligent-grid sorla-db   # sorla-db 1.1+
 ```
 
 ```html
@@ -61,6 +61,7 @@ The full documentation is in [`docs/`](docs/README.md).
 ### Features
 
 - [Sorting & filtering](docs/sorting-filtering.md): multi-column sort, AutoFilter menu, filter model, search
+- [Advanced filter](docs/query-builder.md): visual query builder with nested AND / OR / NOT, generating the SorlaDB find() JSON
 - [Editing & validation](docs/editing.md): editors, parsing, validation, change hooks, keyboard, copy/paste
 - [Selection](docs/selection.md): single/multiple selection, checkboxes, bulk actions
 - [Navbar & status bar](docs/navbar.md): built-in buttons, filter chips, custom items
@@ -90,12 +91,13 @@ The full documentation is in [`docs/`](docs/README.md).
 
 ## Examples
 
-[`examples/`](examples/index.html) has nine runnable pages with sample data:
+[`examples/`](examples/index.html) has ten runnable pages with sample data:
 
 | Example | Shows |
 |---|---|
 | [basic.html](examples/basic.html) | Columns, types, data and the default navbar |
 | [sorting-filtering.html](examples/sorting-filtering.html) | Multi-column sort, AutoFilter, search, formula filters |
+| [query-builder.html](examples/query-builder.html) | Advanced filter: nested AND / OR / NOT, live find() JSON, run it directly in SorlaDB |
 | [editing.html](examples/editing.html) | Editors, validation, cancelable events, a custom editor, paste |
 | [formulas.html](examples/formulas.html) | Calculated columns, cell formulas, footers, conditional formats, custom functions |
 | [infinite-scroll.html](examples/infinite-scroll.html) | Append mode with a fake paginated API |

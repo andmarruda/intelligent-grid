@@ -54,6 +54,7 @@ calculated fields and `_id` are only known at runtime. Cast to your own interfac
 | `FormulaFunction`, `LazyFormulaFunction`, `FunctionContext`, `FormulaValue`, `AstNode`, `EvaluationContext` | Formula engine |
 | `SetCellResult`, `DistinctValue` | Method results |
 | `ConfirmRequest` | Confirmation modal request |
+| `QueryNode`, `QueryGroup`, `QueryRule`, `QueryOperator` | Advanced filter model |
 | `ChangeSet`, `InsertedRow`, `UpdatedRow`, `DeletedRow`, `FieldChange`, `ChangeSummary`, `HistoryEntry`, `ChangeTrackingOptions` | Change tracking |
 
 Custom functions get typed arguments from the overloads of `defineFunction` / `registerFunction`:

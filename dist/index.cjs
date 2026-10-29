@@ -1203,8 +1203,14 @@ function isFilterActive(filter) {
   if (!filter) return false;
   return Array.isArray(filter.values) || (filter.conditions ?? []).some(isActive) || typeof filter.formula === "string" && filter.formula.trim() !== "" || typeof filter.test === "function";
 }
+function andQuery(clauses) {
+  const parts = clauses.filter((clause) => Object.keys(clause).length > 0);
+  if (!parts.length) return {};
+  if (parts.length === 1) return parts[0];
+  return { $and: parts };
+}
 function compileFilters(filters, columns, { locale = "en-US", testFormula } = {}) {
-  const query = {};
+  const clauses = [];
   const predicates = [];
   for (const [field, filter] of Object.entries(filters ?? {})) {
     if (!isFilterActive(filter)) continue;
@@ -1226,7 +1232,12 @@ function compileFilters(filters, columns, { locale = "en-US", testFormula } = {}
           predicates.push((row) => residual.every((c) => testCondition(row[field], c, column, locale)));
         }
       } else {
-        predicates.push((row) => conditions.some((c) => testCondition(row[field], c, column, locale)));
+        const alternatives = conditions.map((condition) => toSorla(condition, column, locale));
+        if (alternatives.every((ops) => ops !== null)) {
+          clauses.push({ $or: alternatives.map((ops) => ({ [field]: ops })) });
+        } else {
+          predicates.push((row) => conditions.some((c) => testCondition(row[field], c, column, locale)));
+        }
       }
     }
     const test = filter.test;
@@ -1237,9 +1248,196 @@ function compileFilters(filters, columns, { locale = "en-US", testFormula } = {}
     if (typeof formula === "string" && formula.trim() && testFormula) {
       predicates.push((row) => testFormula(formula, row));
     }
-    if (Object.keys(operators).length) query[field] = operators;
+    if (Object.keys(operators).length) clauses.unshift({ [field]: operators });
   }
-  return { query, predicates };
+  return { query: andQuery(clauses), predicates };
+}
+
+// src/core/query.ts
+var TEXT_QUERY_OPERATORS = ["eq", "ne", "in", "nin", "contains", "notContains", "startsWith", "endsWith", "empty", "notEmpty"];
+var RANGE_QUERY_OPERATORS = ["eq", "ne", "gt", "gte", "lt", "lte", "between", "in", "nin", "empty", "notEmpty"];
+var BOOLEAN_QUERY_OPERATORS = ["eq", "empty", "notEmpty"];
+var TEXT_MATCH = /* @__PURE__ */ new Set(["contains", "notContains", "startsWith", "endsWith"]);
+var NO_VALUE = /* @__PURE__ */ new Set(["empty", "notEmpty"]);
+var LIST = /* @__PURE__ */ new Set(["in", "nin"]);
+function queryOperatorsFor(column) {
+  if (column.type === "boolean") return BOOLEAN_QUERY_OPERATORS;
+  if (NUMERIC_TYPES.has(column.type) || DATE_TYPES.has(column.type)) return RANGE_QUERY_OPERATORS;
+  return TEXT_QUERY_OPERATORS;
+}
+var emptyGroup = (join = "and") => ({ type: "group", join, children: [] });
+function isCompleteRule(rule) {
+  if (!rule.field || !rule.op) return false;
+  if (NO_VALUE.has(rule.op)) return true;
+  if (LIST.has(rule.op)) return Array.isArray(rule.values) && rule.values.length > 0;
+  if (rule.op === "between") return !isBlank(rule.value) && !isBlank(rule.value2);
+  return rule.value !== void 0 && rule.value !== null && (rule.value !== "" || rule.op === "eq" || rule.op === "ne");
+}
+function normalizeQuery(node) {
+  if (!node) return null;
+  if (node.type === "rule") return isCompleteRule(node) ? { ...node } : null;
+  const children = node.children.map(normalizeQuery).filter((child) => child !== null);
+  if (!children.length) return null;
+  const group = { type: "group", join: node.join === "or" ? "or" : "and", children };
+  if (node.not) group.not = true;
+  return group;
+}
+function isQueryActive(node) {
+  return normalizeQuery(node) !== null;
+}
+var asCondition = (rule) => {
+  const op = rule.op === "eq" ? "equals" : rule.op === "ne" ? "notEquals" : rule.op;
+  return { op, value: rule.value, value2: rule.value2 };
+};
+var isRange = (column) => NUMERIC_TYPES.has(column.type) || DATE_TYPES.has(column.type);
+function ruleOperators(rule, column, locale) {
+  if (LIST.has(rule.op)) return { [rule.op === "in" ? "$in" : "$nin"]: [...rule.values ?? []] };
+  if (TEXT_MATCH.has(rule.op)) return null;
+  if (!isRange(column) && column.type !== "boolean") {
+    if (rule.op === "eq") return { $eq: rule.value ?? "" };
+    if (rule.op === "ne") return { $ne: rule.value ?? "" };
+  }
+  return toSorla({ op: rule.op, value: rule.value, value2: rule.value2 }, column, locale);
+}
+function ruleTest(rule, column, locale) {
+  return (row) => testCondition(row[rule.field], asCondition(rule), column, locale);
+}
+function compileNode(node, columns, options) {
+  const locale = options.locale ?? "en-US";
+  if (node.type === "rule") {
+    const column = columns.get(node.field) ?? { field: node.field, type: "text", title: node.field };
+    const operators = ruleOperators(node, column, locale);
+    return operators ? { kind: "sorla", query: { [node.field]: operators } } : { kind: "js", test: ruleTest(node, column, locale) };
+  }
+  const children = node.children.map((child) => compileNode(child, columns, options));
+  if (children.every((child) => child.kind === "sorla")) {
+    const queries = children.map((child) => child.query);
+    const inner = queries.length === 1 ? queries[0] : { [node.join === "or" ? "$or" : "$and"]: queries };
+    return { kind: "sorla", query: node.not ? { $nor: [inner] } : inner };
+  }
+  const tests = children.map((child) => {
+    if (child.kind === "js") return child.test;
+    let ids = null;
+    return (row) => (ids ??= options.idsFor(child.query)).has(row._id);
+  });
+  const combined = node.join === "or" ? (row) => tests.some((test) => test(row)) : (row) => tests.every((test) => test(row));
+  return { kind: "js", test: node.not ? (row) => !combined(row) : combined };
+}
+function compileQuery(node, columns, options) {
+  const normalized = normalizeQuery(node);
+  if (!normalized) return { query: {}, predicates: [] };
+  if (normalized.type === "group" && normalized.join === "and" && !normalized.not) {
+    const clauses = [];
+    const predicates = [];
+    for (const child of normalized.children) {
+      const compiled2 = compileNode(child, columns, options);
+      if (compiled2.kind === "sorla") clauses.push(compiled2.query);
+      else predicates.push(compiled2.test);
+    }
+    return { query: andQuery(clauses), predicates };
+  }
+  const compiled = compileNode(normalized, columns, options);
+  return compiled.kind === "sorla" ? { query: compiled.query, predicates: [] } : { query: {}, predicates: [compiled.test] };
+}
+var escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+var unescapeRegex = (text) => text.replace(/\\(.)/g, "$1");
+function toSorlaQuery(node, columns, locale = "en-US") {
+  const normalized = normalizeQuery(node);
+  if (!normalized) return {};
+  const write = (current) => {
+    if (current.type === "rule") {
+      const column = columns.get(current.field) ?? { field: current.field, type: "text", title: current.field };
+      const operators = ruleOperators(current, column, locale);
+      if (operators) return { [current.field]: operators };
+      const text = escapeRegex(String(current.value ?? ""));
+      const pattern = current.op === "startsWith" ? `^${text}` : current.op === "endsWith" ? `${text}$` : text;
+      const regex = { $regex: pattern, $options: "i" };
+      return { [current.field]: current.op === "notContains" ? { $not: regex } : regex };
+    }
+    const parts = current.children.map(write);
+    const inner = parts.length === 1 ? parts[0] : { [current.join === "or" ? "$or" : "$and"]: parts };
+    return current.not ? { $nor: [inner] } : inner;
+  };
+  return write(normalized);
+}
+var OPERATOR_FROM_SORLA = { $eq: "eq", $ne: "ne", $gt: "gt", $gte: "gte", $lt: "lt", $lte: "lte", $in: "in", $nin: "nin" };
+function fromSorlaQuery(query) {
+  const readField = (field, condition) => {
+    if (condition === null || typeof condition !== "object" || Array.isArray(condition)) {
+      return [{ type: "rule", field, op: "eq", value: condition }];
+    }
+    const ops = { ...condition };
+    if ("$regex" in ops) {
+      const pattern = String(ops.$regex);
+      if (pattern.startsWith("^")) return [{ type: "rule", field, op: "startsWith", value: unescapeRegex(pattern.slice(1)) }];
+      if (pattern.endsWith("$") && !pattern.endsWith("\\$")) return [{ type: "rule", field, op: "endsWith", value: unescapeRegex(pattern.slice(0, -1)) }];
+      return [{ type: "rule", field, op: "contains", value: unescapeRegex(pattern) }];
+    }
+    const not = ops.$not;
+    if (not && typeof not === "object" && "$regex" in not) {
+      return [{ type: "rule", field, op: "notContains", value: unescapeRegex(String(not.$regex)) }];
+    }
+    if (ops.$eq === "" && Object.keys(ops).length === 1) return [{ type: "rule", field, op: "empty" }];
+    if (ops.$ne === "" && Object.keys(ops).length === 1) return [{ type: "rule", field, op: "notEmpty" }];
+    if (ops.$ne === "" && Object.keys(ops).some((key) => key !== "$ne")) delete ops.$ne;
+    if ("$gte" in ops && "$lte" in ops) {
+      const rule = { type: "rule", field, op: "between", value: ops.$gte, value2: ops.$lte };
+      delete ops.$gte;
+      delete ops.$lte;
+      return [rule, ...readField(field, ops)];
+    }
+    return Object.entries(ops).map(([operator, value]) => {
+      if (operator === "$not") return { ...emptyGroup(), not: true, children: readField(field, value) };
+      const op = OPERATOR_FROM_SORLA[operator];
+      if (!op) throw new Error(`The query builder cannot represent ${operator}`);
+      return op === "in" || op === "nin" ? { type: "rule", field, op, values: [...value] } : { type: "rule", field, op, value };
+    });
+  };
+  const read = (current, join = "and") => {
+    const children = [];
+    for (const [key, value] of Object.entries(current)) {
+      if (key === "$and" || key === "$or" || key === "$nor") {
+        if (!Array.isArray(value)) throw new Error(`${key} must be an array`);
+        const groups = value.map((item) => read(item));
+        if (key === "$nor") {
+          children.push({ type: "group", join: "or", not: true, children: groups.flatMap(unwrap) });
+        } else {
+          children.push({ type: "group", join: key === "$or" ? "or" : "and", children: groups.flatMap(unwrap) });
+        }
+      } else if (key.startsWith("$")) {
+        throw new Error(`The query builder cannot represent ${key}`);
+      } else {
+        children.push(...readField(key, value));
+      }
+    }
+    return { type: "group", join, children };
+  };
+  const unwrap = (group) => group.join === "and" && !group.not && group.children.length === 1 ? [group.children[0]] : [group];
+  const root = read(query);
+  const only = root.children[0];
+  if (root.children.length === 1 && only && only.type === "group") return only;
+  return root;
+}
+var OPERATOR_SYMBOLS = { eq: "=", ne: "\u2260", gt: ">", gte: "\u2265", lt: "<", lte: "\u2264" };
+function describeQuery(node, columns, t, format) {
+  const normalized = normalizeQuery(node);
+  if (!normalized) return "";
+  const text = (current, nested) => {
+    if (current.type === "rule") {
+      const column = columns.get(current.field) ?? { field: current.field, type: "text", title: current.field };
+      const show = (value) => isBlank(value) ? t("blanks") : format(value, column);
+      const symbol = OPERATOR_SYMBOLS[current.op];
+      if (symbol) return `${column.title} ${symbol} ${show(current.value)}`;
+      if (NO_VALUE.has(current.op)) return `${column.title} ${t(`op_${current.op}`).toLowerCase()}`;
+      if (LIST.has(current.op)) return `${column.title} ${t(`q_${current.op}`)} ${(current.values ?? []).map(show).join(", ")}`;
+      if (current.op === "between") return `${column.title} ${t("op_between").toLowerCase()} ${show(current.value)} \u2013 ${show(current.value2)}`;
+      return `${column.title} ${t(`op_${current.op}`).toLowerCase()} "${String(current.value ?? "")}"`;
+    }
+    const joined = current.children.map((child) => text(child, true)).join(` ${t(current.join === "or" ? "or" : "and").toUpperCase()} `);
+    const wrapped = nested && current.children.length > 1 || current.not ? `(${joined})` : joined;
+    return current.not ? `${t("not").toUpperCase()} ${wrapped}` : wrapped;
+  };
+  return text(normalized, false);
 }
 
 // src/formula/functions.ts
@@ -2842,6 +3040,26 @@ function download(data, filename, mime) {
 // src/i18n/labels.ts
 var en = {
   search: "Search\u2026",
+  advancedFilter: "Advanced filter",
+  addRule: "+ Rule",
+  addGroup: "+ Group",
+  removeRule: "Remove rule",
+  removeGroup: "Remove group",
+  not: "Not",
+  join: "Combine with",
+  field: "Field",
+  operator: "Operator",
+  value: "Value",
+  queryJson: "find() query (JSON)",
+  copyJson: "Copy JSON",
+  copied: "Copied",
+  gridSideNote: "Text matching (contains, begins with, ends with) is evaluated by the grid: SorlaDB has no $regex yet. Everything else runs in find().",
+  previewRows: "{count} matching row(s)",
+  queryEmpty: "Add a rule to start.",
+  op_in: "Is one of",
+  op_nin: "Is not one of",
+  q_in: "in",
+  q_nin: "not in",
   clearFilters: "Clear filters",
   columns: "Columns",
   addRow: "Add row",
@@ -2906,6 +3124,26 @@ var en = {
 };
 var ptBR = {
   search: "Pesquisar\u2026",
+  advancedFilter: "Filtro avan\xE7ado",
+  addRule: "+ Regra",
+  addGroup: "+ Grupo",
+  removeRule: "Remover regra",
+  removeGroup: "Remover grupo",
+  not: "N\xE3o",
+  join: "Combinar com",
+  field: "Campo",
+  operator: "Operador",
+  value: "Valor",
+  queryJson: "Consulta do find() (JSON)",
+  copyJson: "Copiar JSON",
+  copied: "Copiado",
+  gridSideNote: "Busca em texto (cont\xE9m, come\xE7a com, termina com) \xE9 avaliada pelo grid: o SorlaDB ainda n\xE3o tem $regex. Todo o resto roda no find().",
+  previewRows: "{count} linha(s) encontrada(s)",
+  queryEmpty: "Adicione uma regra para come\xE7ar.",
+  op_in: "\xC9 um de",
+  op_nin: "N\xE3o \xE9 nenhum de",
+  q_in: "em",
+  q_nin: "fora de",
   clearFilters: "Limpar filtros",
   columns: "Colunas",
   addRow: "Adicionar linha",
@@ -3242,6 +3480,298 @@ function openConfirm(container, request, t) {
   });
 }
 
+// src/ui/query-builder.ts
+var TEXT_MATCH2 = /* @__PURE__ */ new Set(["contains", "notContains", "startsWith", "endsWith"]);
+var MAX_DEPTH = 4;
+var QueryBuilder = class {
+  element;
+  grid;
+  draft = emptyGroup();
+  body;
+  json;
+  note;
+  preview;
+  previewTimer;
+  constructor(grid) {
+    this.grid = grid;
+    const t = grid.t;
+    this.body = h("div", { class: "ig-qb-body" });
+    this.json = h("pre", { class: "ig-qb-json", tabindex: "0", "aria-label": t("queryJson") });
+    this.note = h("p", { class: "ig-qb-note", hidden: true, text: t("gridSideNote") });
+    this.preview = h("span", { class: "ig-qb-preview", "aria-live": "polite" });
+    const copy = h("button", {
+      type: "button",
+      class: "ig-btn",
+      text: t("copyJson"),
+      onclick: async () => {
+        try {
+          await navigator.clipboard.writeText(this.json.textContent ?? "");
+          copy.textContent = t("copied");
+        } catch {
+          getSelection()?.selectAllChildren(this.json);
+        }
+        setTimeout(() => {
+          copy.textContent = t("copyJson");
+        }, 1500);
+      }
+    });
+    this.element = h(
+      "div",
+      { class: "ig-qb", role: "region", "aria-label": t("advancedFilter"), hidden: true },
+      this.body,
+      h(
+        "details",
+        { class: "ig-qb-details" },
+        h("summary", { text: t("queryJson") }),
+        this.json,
+        this.note,
+        h("div", { class: "ig-qb-json-actions" }, copy)
+      ),
+      h(
+        "div",
+        { class: "ig-qb-footer" },
+        this.preview,
+        h(
+          "div",
+          { class: "ig-qb-actions" },
+          h("button", { type: "button", class: "ig-btn", text: t("clear"), onclick: () => this.clear() }),
+          h("button", { type: "button", class: "ig-btn", text: t("cancel"), onclick: () => this.close() }),
+          h("button", { type: "button", class: "ig-btn ig-btn-primary", text: t("apply"), onclick: () => this.apply() })
+        )
+      )
+    );
+    this.element.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        this.close();
+      } else if (e.key === "Enter" && e.target instanceof HTMLInputElement) {
+        e.preventDefault();
+        this.apply();
+      }
+    });
+  }
+  get isOpen() {
+    return !this.element.hidden;
+  }
+  open() {
+    const current = this.grid.getQuery();
+    this.draft = current ? current.type === "group" ? structuredClone(current) : { ...emptyGroup(), children: [structuredClone(current)] } : { ...emptyGroup(), children: [this.newRule()] };
+    this.element.hidden = false;
+    this.render();
+    this.element.querySelector("select, input, button")?.focus();
+    this.grid.emit("queryBuilderOpen", {});
+  }
+  close() {
+    if (!this.isOpen) return;
+    this.element.hidden = true;
+    clearTimeout(this.previewTimer);
+    this.grid.emit("queryBuilderClose", {});
+  }
+  toggle() {
+    if (this.isOpen) this.close();
+    else this.open();
+  }
+  apply() {
+    this.grid.setQuery(this.draft);
+    this.close();
+  }
+  clear() {
+    this.draft = { ...emptyGroup(), children: [this.newRule()] };
+    this.render();
+  }
+  columns() {
+    return this.grid.columns.filter((column) => column.filterable);
+  }
+  newRule(field) {
+    const column = this.columns().find((c) => c.field === field) ?? this.columns()[0];
+    const rule = { type: "rule", field: column?.field ?? "", op: column ? queryOperatorsFor(column)[0] : "eq", value: "" };
+    if (column?.type === "boolean") rule.value = true;
+    return rule;
+  }
+  changed() {
+    const json = toSorlaQuery(this.draft, this.grid.queryColumns(), this.grid.locale);
+    this.json.textContent = JSON.stringify(json, null, 2);
+    const usesTextMatch = (node) => node.type === "rule" ? TEXT_MATCH2.has(node.op) : node.children.some(usesTextMatch);
+    this.note.hidden = !usesTextMatch(this.draft);
+    clearTimeout(this.previewTimer);
+    this.previewTimer = setTimeout(() => {
+      this.preview.textContent = this.grid.t("previewRows", { count: this.grid.countQuery(this.draft) });
+    }, 150);
+  }
+  render() {
+    this.body.replaceChildren(this.renderGroup(this.draft, 0, null));
+    this.changed();
+  }
+  renderGroup(group, depth, parent) {
+    const t = this.grid.t;
+    const joinButton = (join, label) => h("button", {
+      type: "button",
+      class: `ig-qb-join${group.join === join ? " ig-active" : ""}`,
+      "aria-pressed": String(group.join === join),
+      text: label,
+      onclick: () => {
+        group.join = join;
+        this.render();
+      }
+    });
+    const not = h("input", { type: "checkbox", checked: !!group.not, onchange: (e) => {
+      group.not = e.target.checked;
+      this.render();
+    } });
+    const header = h(
+      "div",
+      { class: "ig-qb-group-header" },
+      h("div", { class: "ig-qb-joins", role: "group", "aria-label": t("join") }, joinButton("and", t("and")), joinButton("or", t("or"))),
+      h("label", { class: "ig-qb-not" }, not, t("not")),
+      h("span", { class: "ig-qb-spacer" }),
+      h("button", { type: "button", class: "ig-btn ig-btn-link", text: t("addRule"), onclick: () => {
+        group.children.push(this.newRule());
+        this.render();
+      } }),
+      depth < MAX_DEPTH ? h("button", {
+        type: "button",
+        class: "ig-btn ig-btn-link",
+        text: t("addGroup"),
+        onclick: () => {
+          group.children.push({ ...emptyGroup(group.join === "and" ? "or" : "and"), children: [this.newRule()] });
+          this.render();
+        }
+      }) : null,
+      parent ? h("button", {
+        type: "button",
+        class: "ig-qb-remove",
+        "aria-label": t("removeGroup"),
+        title: t("removeGroup"),
+        text: "\xD7",
+        onclick: () => {
+          parent.children.splice(parent.children.indexOf(group), 1);
+          this.render();
+        }
+      }) : null
+    );
+    const children = group.children.length ? group.children.map((child) => child.type === "group" ? this.renderGroup(child, depth + 1, group) : this.renderRule(child, group)) : [h("p", { class: "ig-qb-empty", text: t("queryEmpty") })];
+    return h(
+      "div",
+      { class: `ig-qb-group${group.not ? " ig-qb-negated" : ""}`, dataset: { depth: String(depth), join: group.join } },
+      header,
+      h("div", { class: "ig-qb-children" }, children)
+    );
+  }
+  renderRule(rule, parent) {
+    const t = this.grid.t;
+    const columns = this.columns();
+    const column = columns.find((c) => c.field === rule.field) ?? columns[0];
+    if (!column) return h("div");
+    const field = h("select", {
+      class: "ig-input",
+      "aria-label": t("field"),
+      onchange: (e) => {
+        const next = this.newRule(e.target.value);
+        Object.assign(rule, { field: next.field, op: next.op, value: next.value, value2: void 0, values: void 0 });
+        this.render();
+      }
+    }, columns.map((c) => h("option", { value: c.field, text: c.title, selected: c.field === column.field })));
+    const operators = queryOperatorsFor(column);
+    const op = h("select", {
+      class: "ig-input",
+      "aria-label": t("operator"),
+      onchange: (e) => {
+        const next = e.target.value;
+        const wasList = rule.op === "in" || rule.op === "nin";
+        rule.op = next;
+        if ((next === "in" || next === "nin") && !wasList) rule.values = [];
+        this.render();
+      }
+    }, operators.map((o) => h("option", { value: o, text: this.operatorLabel(o, column), selected: o === rule.op })));
+    const incomplete = !isCompleteRule(rule);
+    return h(
+      "div",
+      { class: `ig-qb-rule${incomplete ? " ig-qb-incomplete" : ""}` },
+      field,
+      op,
+      this.renderValue(rule, column),
+      TEXT_MATCH2.has(rule.op) ? h("span", { class: "ig-qb-badge", title: t("gridSideNote"), text: "grid" }) : null,
+      h("button", {
+        type: "button",
+        class: "ig-qb-remove",
+        "aria-label": t("removeRule"),
+        title: t("removeRule"),
+        text: "\xD7",
+        onclick: () => {
+          parent.children.splice(parent.children.indexOf(rule), 1);
+          this.render();
+        }
+      })
+    );
+  }
+  operatorLabel(op, column) {
+    const t = this.grid.t;
+    if (op === "in" || op === "nin") return t(`op_${op}`);
+    if ((op === "eq" || op === "ne") && !NUMERIC_TYPES.has(column.type) && !DATE_TYPES.has(column.type) && column.type !== "boolean") {
+      return t(op === "eq" ? "op_equals" : "op_notEquals");
+    }
+    return t(`op_${op}`);
+  }
+  renderValue(rule, column) {
+    const t = this.grid.t;
+    const update = (key) => (e) => {
+      rule[key] = e.target.value;
+      this.changed();
+      e.target.closest(".ig-qb-rule")?.classList.toggle("ig-qb-incomplete", !isCompleteRule(rule));
+    };
+    const type = DATE_TYPES.has(column.type) ? "date" : "text";
+    const input = (key) => h("input", {
+      class: "ig-input",
+      type,
+      "aria-label": t("value"),
+      inputmode: NUMERIC_TYPES.has(column.type) ? "decimal" : null,
+      value: rule[key] === void 0 || rule[key] === null ? "" : String(rule[key]),
+      oninput: update(key)
+    });
+    if (rule.op === "empty" || rule.op === "notEmpty") return null;
+    if (rule.op === "between") return h("span", { class: "ig-qb-range" }, input("value"), h("span", { text: "\u2013" }), input("value2"));
+    if (rule.op === "in" || rule.op === "nin") {
+      const values = this.grid.distinctValues(column.field);
+      const chosen = new Set(rule.values ?? []);
+      const list = h("select", {
+        class: "ig-input ig-qb-values",
+        multiple: true,
+        size: Math.min(6, Math.max(3, values.length)),
+        "aria-label": t("value"),
+        onchange: (e) => {
+          const options = [...e.target.selectedOptions];
+          rule.values = options.map((option) => values[Number(option.value)].value);
+          this.changed();
+        }
+      }, values.map((v, i) => h("option", { value: String(i), text: v.value === "" ? t("blanks") : v.label, selected: chosen.has(v.value) })));
+      return list;
+    }
+    if (column.type === "boolean") {
+      return h("select", {
+        class: "ig-input",
+        "aria-label": t("value"),
+        onchange: (e) => {
+          rule.value = e.target.value === "true";
+          this.changed();
+        }
+      }, h("option", { value: "true", text: t("true"), selected: rule.value !== false }), h("option", { value: "false", text: t("false"), selected: rule.value === false }));
+    }
+    if (column.options && (rule.op === "eq" || rule.op === "ne")) {
+      const options = column.options;
+      if (rule.value === "" && options[0]) rule.value = options[0].value;
+      return h("select", {
+        class: "ig-input",
+        "aria-label": t("value"),
+        onchange: (e) => {
+          rule.value = options[Number(e.target.value)]?.value;
+          this.changed();
+        }
+      }, options.map((o, i) => h("option", { value: String(i), text: o.label, selected: o.value === rule.value })));
+    }
+    return input("value");
+  }
+};
+
 // src/ui/grid.ts
 var isRow = (row) => row !== null;
 var targetOf = (event) => event.target instanceof Element ? event.target : null;
@@ -3260,8 +3790,9 @@ var DEFAULTS = {
   sort: { mode: "modifier" },
   initialSort: [],
   initialFilters: {},
+  initialQuery: null,
   selection: { mode: "multiple", checkbox: true },
-  navbar: { search: true, filters: true, columns: true, export: ["csv", "xlsx"], add: false, delete: false, changes: true, items: [] },
+  navbar: { search: true, filters: true, columns: true, export: ["csv", "xlsx"], add: false, delete: false, changes: true, query: true, items: [] },
   changeTracking: { inputName: "changes", historyLimit: 5e3 },
   statusBar: true,
   renderChunk: 100,
@@ -3286,6 +3817,8 @@ var IntelligentGrid = class {
   _columnMap = /* @__PURE__ */ new Map();
   _sort;
   _filters;
+  _queryModel = null;
+  _queryBuilder = null;
   _search = "";
   _selected = /* @__PURE__ */ new Set();
   _anchorId = null;
@@ -3342,6 +3875,7 @@ var IntelligentGrid = class {
     if (tracking) this._tracker = new ChangeTracker(tracking.historyLimit);
     this._sort = [...this.options.initialSort];
     this._filters = { ...this.options.initialFilters };
+    this._queryModel = normalizeQuery(this.options.initialQuery);
     this._append = this.options.append ? { pageSize: 100, serverSide: true, threshold: 200, ...this.options.append, loaded: 0, hasMore: true, loading: false, request: 0 } : null;
     this._setColumns(this.options.columns);
     this._build();
@@ -3742,10 +4276,61 @@ var IntelligentGrid = class {
     this._onQueryChange();
     this.emit("filterChange", { field: null, filter: null, filters: this.getFilters() });
   }
+  /** Column filters, search and the advanced filter. */
   clearFilters() {
     this._search = "";
     if (this._searchInput) this._searchInput.value = "";
+    if (this._queryModel) {
+      this._queryModel = null;
+      this.emit("queryChange", { query: null, sorlaQuery: {} });
+    }
     this.setFilters({});
+  }
+  /* ---------------------------------------------------------------- advanced filter (query builder) */
+  /** The advanced filter as built in the query builder, null when none. */
+  getQuery() {
+    return this._queryModel ? structuredClone(this._queryModel) : null;
+  }
+  /**
+   * Sets the advanced filter. It is combined (AND) with the column filters and the search.
+   * Incomplete rules and empty groups are dropped.
+   */
+  setQuery(query) {
+    this._queryModel = normalizeQuery(query);
+    this._renderNavbar();
+    this._onQueryChange();
+    this.emit("queryChange", { query: this.getQuery(), sorlaQuery: this.toSorlaQuery() });
+  }
+  /** The advanced filter as SorlaDB / MongoDB find() JSON ({} when none). */
+  toSorlaQuery(query = this._queryModel) {
+    return toSorlaQuery(query, this._columnMap, this.locale);
+  }
+  /** Loads a SorlaDB / MongoDB query (e.g. a saved one) into the advanced filter. */
+  fromSorlaQuery(json) {
+    this.setQuery(fromSorlaQuery(json));
+  }
+  /** Opens or closes the query builder panel. */
+  toggleQueryBuilder(open) {
+    if (!this._queryBuilder) return;
+    if (open === void 0) this._queryBuilder.toggle();
+    else if (open) this._queryBuilder.open();
+    else this._queryBuilder.close();
+    this._renderNavbar();
+  }
+  /** @internal rows matching a query (with the other filters), for the builder preview */
+  countQuery(query) {
+    const previous = this._queryModel;
+    this._queryModel = normalizeQuery(query);
+    try {
+      const { query: sorla, predicates } = this._compiled();
+      return this.store.query({ query: sorla, predicates }).length;
+    } finally {
+      this._queryModel = previous;
+    }
+  }
+  /** @internal */
+  queryColumns() {
+    return this._columnMap;
   }
   setSearch(text) {
     this._search = String(text ?? "");
@@ -3773,7 +4358,12 @@ var IntelligentGrid = class {
       const columns = this.visibleColumns;
       predicates.push((row) => columns.some((c) => formatCell(row[c.field], c, row, this.locale).toLocaleLowerCase(this.locale).includes(needle)));
     }
-    return { query, predicates };
+    if (!this._queryModel) return { query, predicates };
+    const advanced = compileQuery(this._queryModel, this._columnMap, {
+      locale: this.locale,
+      idsFor: (sorla) => new Set(this.store.query({ query: sorla }).map((row) => row._id))
+    });
+    return { query: andQuery([query, advanced.query]), predicates: [...predicates, ...advanced.predicates] };
   }
   _query() {
     const { query, predicates } = this._append?.serverSide ? { query: {}, predicates: [] } : this._compiled();
@@ -3832,7 +4422,15 @@ var IntelligentGrid = class {
     if (!append || append.loading || !append.hasMore) return;
     append.loading = true;
     const request = append.request;
-    const params = { offset: append.loaded, limit: append.pageSize, sort: this.getSort(), filters: this.getFilters(), search: this._search };
+    const params = {
+      offset: append.loaded,
+      limit: append.pageSize,
+      sort: this.getSort(),
+      filters: this.getFilters(),
+      search: this._search,
+      query: this.getQuery(),
+      sorlaQuery: this.toSorlaQuery()
+    };
     this._setLoading(true);
     this.emit("loadStart", params);
     try {
@@ -3844,7 +4442,7 @@ var IntelligentGrid = class {
       append.loaded += rows.length;
       append.total = page?.total ?? null;
       append.hasMore = page?.hasMore ?? rows.length >= append.pageSize;
-      const localQuery = !append.serverSide && (this._sort.length || Object.keys(this._filters).length || this._search);
+      const localQuery = !append.serverSide && (this._sort.length || Object.keys(this._filters).length || this._search || this._queryModel);
       if (localQuery) {
         append.loading = false;
         this.refresh();
@@ -4075,6 +4673,11 @@ var IntelligentGrid = class {
     );
     this._status = h("div", { class: "ig-status", "aria-live": "polite" });
     if (this.options.navbar) this.root.append(this._navbar);
+    if (this.options.navbar && this.options.navbar.query) {
+      this._queryBuilder = new QueryBuilder(this);
+      this.root.append(this._queryBuilder.element);
+      this.on("queryBuilderClose", () => this._renderNavbar());
+    }
     this.root.append(this._scroller);
     if (this.options.statusBar) this.root.append(this._status);
     this.element.append(this.root);
@@ -4370,7 +4973,25 @@ var IntelligentGrid = class {
       }
       left.append(this._searchInput);
     }
+    if (config.query && this._queryBuilder) {
+      const active = isQueryActive(this._queryModel);
+      left.append(h("button", {
+        type: "button",
+        class: `ig-btn ig-query-btn${active ? " ig-active" : ""}`,
+        "aria-expanded": String(this._queryBuilder.isOpen),
+        text: this.t("advancedFilter"),
+        onclick: () => this.toggleQueryBuilder()
+      }));
+    }
     if (config.filters) {
+      if (this._queryModel) {
+        left.append(h(
+          "span",
+          { class: "ig-chip ig-chip-query" },
+          h("span", { text: describeQuery(this._queryModel, this._columnMap, this.t, (value, column) => formatCell(value, column, {}, this.locale)) }),
+          h("button", { type: "button", class: "ig-chip-remove", "aria-label": this.t("clear"), text: "\xD7", onclick: () => this.setQuery(null) })
+        ));
+      }
       for (const [field, filter] of Object.entries(this._filters)) {
         const column = this.getColumn(field);
         if (!column) continue;
@@ -4381,7 +5002,7 @@ var IntelligentGrid = class {
           h("button", { type: "button", class: "ig-chip-remove", "aria-label": this.t("clear"), text: "\xD7", onclick: () => this.setFilter(field, null) })
         ));
       }
-      if (Object.keys(this._filters).length || this._search) {
+      if (Object.keys(this._filters).length || this._search || this._queryModel) {
         left.append(h("button", { type: "button", class: "ig-btn ig-btn-link", text: this.t("clearFilters"), onclick: () => this.clearFilters() }));
       }
     }

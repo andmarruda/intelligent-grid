@@ -10,7 +10,7 @@ const grid = new IntelligentGrid('#customers', {
         pageSize: 100,          // rows per request (default 100)
         threshold: 200,         // px from the bottom that triggers the next page (default 200)
         serverSide: true,       // default true
-        load: async ({ offset, limit, sort, filters, search }) => {
+        load: async ({ offset, limit, sort, filters, search, query, sorlaQuery }) => {
             const response = await fetch(`/api/customers?offset=${offset}&limit=${limit}`
                 + `&sort=${encodeURIComponent(JSON.stringify(sort))}`
                 + `&filters=${encodeURIComponent(JSON.stringify(filters))}`
@@ -29,7 +29,8 @@ const grid = new IntelligentGrid('#customers', {
 
 ## serverSide: true (default)
 
-Sort, filters and search are **sent to `load`** and not applied locally. Changing any of them
+Sort, filters, search and the [advanced filter](query-builder.md) (`query` model and `sorlaQuery`
+JSON) are **sent to `load`** and not applied locally. Changing any of them
 clears the loaded rows and starts again from `offset: 0`. Responses that arrive after a change
 are discarded, so out-of-order responses are safe. Your API receives the same `sort` and `filters`
 models the grid uses ([filter model](sorting-filtering.md#filter-model)).

@@ -10,8 +10,9 @@
  *     test: (value, row) => boolean         developer predicate
  *   }
  *
- * Everything SorlaDB can answer goes into the query ($eq $ne $gt $gte $lt $lte $in), the rest
- * (case insensitive text, "contains", OR between conditions, formulas) becomes a JS predicate.
+ * Everything SorlaDB can answer goes into the query ($eq $ne $gt $gte $lt $lte $in, and $or for
+ * conditions joined by "or"), the rest (case insensitive text, "contains", formulas) becomes a JS
+ * predicate. SorlaDB has no $regex yet, so text matching stays in JS.
  */
 import { DATE_TYPES, NUMERIC_TYPES, parseDateText, parseNumberText } from './columns.ts';
 import { isBlank } from './store.ts';
@@ -54,7 +55,7 @@ const nextDay = (iso: string) => serialToISO(Math.floor(toSerial(iso)!) + 1);
 /**
  * @return SorlaDB operators for one condition, null when Sorla cannot express it
  */
-function toSorla(condition: FilterCondition, column: FilterColumn, locale: string): SorlaOperators | null {
+export function toSorla(condition: FilterCondition, column: FilterColumn, locale: string): SorlaOperators | null {
     const { op } = condition;
     if (op === 'empty') return { $eq: '' };
     if (op === 'notEmpty') return { $ne: '' };
@@ -162,8 +163,18 @@ export function isFilterActive(filter: Filter | null | undefined): filter is Fil
 }
 
 export interface CompiledFilters {
-    query: Record<string, SorlaOperators>;
+    query: Record<string, unknown>;
     predicates: Array<(row: RowData) => boolean>;
+}
+
+/**
+ * Joins SorlaDB query clauses with AND: one clause stays as is, several go into $and.
+ */
+export function andQuery(clauses: Array<Record<string, unknown>>): Record<string, unknown> {
+    const parts = clauses.filter(clause => Object.keys(clause).length > 0);
+    if (!parts.length) return {};
+    if (parts.length === 1) return parts[0]!;
+    return { $and: parts };
 }
 
 export function compileFilters(
@@ -171,7 +182,7 @@ export function compileFilters(
     columns: Map<string, FilterColumn>,
     { locale = 'en-US', testFormula }: { locale?: string; testFormula?: (formula: string, row: RowData) => boolean } = {}
 ): CompiledFilters {
-    const query: Record<string, SorlaOperators> = {};
+    const clauses: Array<Record<string, unknown>> = [];
     const predicates: CompiledFilters['predicates'] = [];
 
     for (const [field, filter] of Object.entries(filters ?? {})) {
@@ -197,7 +208,13 @@ export function compileFilters(
                     predicates.push(row => residual.every(c => testCondition(row[field], c, column, locale)));
                 }
             } else {
-                predicates.push(row => conditions.some(c => testCondition(row[field], c, column, locale)));
+                // SorlaDB 1.1 evaluates $or with any number of operators per field
+                const alternatives = conditions.map(condition => toSorla(condition, column, locale));
+                if (alternatives.every(ops => ops !== null)) {
+                    clauses.push({ $or: alternatives.map(ops => ({ [field]: ops })) });
+                } else {
+                    predicates.push(row => conditions.some(c => testCondition(row[field], c, column, locale)));
+                }
             }
         }
 
@@ -211,8 +228,8 @@ export function compileFilters(
             predicates.push(row => testFormula(formula, row));
         }
 
-        if (Object.keys(operators).length) query[field] = operators;
+        if (Object.keys(operators).length) clauses.unshift({ [field]: operators });
     }
 
-    return { query, predicates };
+    return { query: andQuery(clauses), predicates };
 }

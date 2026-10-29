@@ -1,9 +1,11 @@
 # SorlaDB improvements
 
-Intelligent Grid stores its rows in [SorlaDB](https://github.com/sysborg/sorla-db) 1.0.0. While
-building it, these issues came up. Every one reproduces against the npm package. The grid works
-around all of them in [`src/core/store.ts`](../src/core/store.ts), where each workaround is marked
-`SorlaDB 1.0 workaround`.
+Intelligent Grid stores its rows in [SorlaDB](https://github.com/sysborg/sorla-db). While building it
+on 1.0.0, these issues came up. **sorla-db 1.1.0 fixed #5 and #6** (nested logical operators and several
+operators per field), with a recursive query matcher and a test suite that went from 45 to 104 tests,
+including 500 random nested queries checked against a reference implementation. The grid requires 1.1+.
+The remaining issues are worked around in [`src/core/store.ts`](../src/core/store.ts), each marked
+`SorlaDB 1.0 workaround`, and are tracked in sorla-db as `it.failing` tests.
 
 | # | Issue | Where (sorla-db) | Grid workaround |
 |---|---|---|---|
@@ -11,8 +13,8 @@ around all of them in [`src/core/store.ts`](../src/core/store.ts), where each wo
 | 2 | `_validateKeys` returns after the first object/array value, so later keys are never validated | same | none needed |
 | 3 | `cursor.sort()` always throws `documents is not a constructor`: `cursor.js` and `document.js` require each other, so `documents` is `{}` inside `cursor.js` | `src/documents/cursor.js` | sorting happens in the adapter |
 | 4 | `cursor.sort()` compares with `<` / `>` only: no locale collation, case-sensitive, inconsistent order with blanks or mixed types | same | Excel comparator (`compareCells`) |
-| 5 | Inside `$or` / `$and`, `handleComparison` reads only the first operator of `{ a: { $gte: 1, $lte: 5 } }` | `src/query_language/operators.js` | OR conditions run as JS predicates |
-| 6 | Nested logical operators (`$and: [{ $or: [...] }]`) throw `this[operator] is not a function` | `operators.js` `$and` / `$or` | queries stay flat (implicit AND) |
+| 5 | ~~Inside `$or` / `$and`, only the first operator of `{ a: { $gte: 1, $lte: 5 } }` was read~~ | **fixed in 1.1.0** | OR conditions now run in `find()` |
+| 6 | ~~Nested logical operators (`$and: [{ $or: [...] }]`) threw~~ | **fixed in 1.1.0** | the [advanced filter](query-builder.md) runs nested queries in `find()` |
 | 7 | `findOne()` and `cursor.first()` throw when nothing matches | `query.js`, `cursor.js` | the adapter keeps an id → document map |
 | 8 | `cursor.toArray()` throws (`structuredClone` of a Proxy) | `cursor.js` | reads `doc._data` |
 | 9 | No `updateOne/updateMany/deleteOne/deleteMany/drop`, and the document proxy rejects writes from outside the library | `manipulation.js`, `document.js` | writes `doc._data`, splices `collection.all` |
@@ -35,13 +37,11 @@ s.db.c.find({}).sort({ a: 1 });                              // TypeError: docum
 s.db.c.insertOne({ a: null });                               // TypeError: Cannot convert undefined or null to object
 s.db.c.findOne({ a: 99 });                                   // TypeError: Cannot read properties of undefined (reading '_data')
 s.db.c.find({}).toArray();                                   // DataCloneError: #<documents> could not be cloned
-s.db.c.find({ $or: [{ a: { $gte: 1, $lte: 1 } }] }).length;  // 2, expected 1
-s.db.c.find({ $and: [{ $or: [{ a: 1 }] }, { a: { $gt: 0 } }] }); // TypeError: this[operator] is not a function
 ```
 
 ## Suggested order
 
-1. **#1, #3, #5/#6, #9**: unblock nulls, sorting, nested queries and updates/deletes.
+1. **#1, #3, #9**: unblock nulls, sorting and updates/deletes (#5/#6 done in 1.1.0).
 2. **#14**: `$regex` with an `i` option, `skip`/`limit`, a `sort` with a collation option.
 3. **#15**: publish an ES module / CommonJS build without `faker`.
 

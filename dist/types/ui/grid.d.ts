@@ -9,7 +9,7 @@ import { Emitter } from '../core/events.js';
 import type { ChangeSet, ChangeSummary, HistoryEntry } from '../core/changes.js';
 import { CalcEngine } from '../formula/engine.js';
 import type { FormulaFunction, FunctionDefinition, LazyFormulaFunction } from '../formula/functions.js';
-import type { ChangeSource, Column, ConfirmRequest, ColumnDefinition, CsvExportOptions, ChangeTrackingOptions, Filter, FilterModel, GridEvent, GridEventHandler, GridOptions, NavbarOptions, Row, SelectionMode, SelectionOptions, SortEntry, Translator, XlsxExportOptions } from '../types.js';
+import type { ChangeSource, Column, ConfirmRequest, ColumnDefinition, CsvExportOptions, ChangeTrackingOptions, Filter, FilterModel, GridEvent, QueryNode, GridEventHandler, GridOptions, NavbarOptions, Row, SelectionMode, SelectionOptions, SortEntry, Translator, XlsxExportOptions } from '../types.js';
 type ResolvedOptions = Required<Omit<GridOptions, 'selection' | 'navbar' | 'sort' | 'sorla' | 'database' | 'currency' | 'locale' | 'changeTracking' | 'confirm'>> & {
     confirm?: GridOptions['confirm'];
     changeTracking: ChangeTrackingOptions | false;
@@ -44,6 +44,8 @@ export declare class IntelligentGrid {
     private _columnMap;
     private _sort;
     private _filters;
+    private _queryModel;
+    private _queryBuilder;
     private _search;
     private _selected;
     private _anchorId;
@@ -179,7 +181,25 @@ export declare class IntelligentGrid {
     getFilters(): FilterModel;
     setFilter(field: string, filter: Filter | null): void;
     setFilters(filters: FilterModel | null): void;
+    /** Column filters, search and the advanced filter. */
     clearFilters(): void;
+    /** The advanced filter as built in the query builder, null when none. */
+    getQuery(): QueryNode | null;
+    /**
+     * Sets the advanced filter. It is combined (AND) with the column filters and the search.
+     * Incomplete rules and empty groups are dropped.
+     */
+    setQuery(query: QueryNode | null): void;
+    /** The advanced filter as SorlaDB / MongoDB find() JSON ({} when none). */
+    toSorlaQuery(query?: QueryNode | null): Record<string, unknown>;
+    /** Loads a SorlaDB / MongoDB query (e.g. a saved one) into the advanced filter. */
+    fromSorlaQuery(json: Record<string, unknown>): void;
+    /** Opens or closes the query builder panel. */
+    toggleQueryBuilder(open?: boolean): void;
+    /** @internal rows matching a query (with the other filters), for the builder preview */
+    countQuery(query: QueryNode | null): number;
+    /** @internal */
+    queryColumns(): Map<string, Column>;
     setSearch(text: string): void;
     private _onQueryChange;
     private _compiled;

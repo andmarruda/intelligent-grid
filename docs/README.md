@@ -12,6 +12,7 @@ to the Sorla query language, and a formula engine adds Excel calculations on top
 | [Grid options](options.md) | Every constructor option |
 | [Columns](columns.md) | Column schema, types, formats, rendering, hidden columns |
 | [Sorting & filtering](sorting-filtering.md) | Multi-column sort, AutoFilter menu, filter model, search |
+| [Advanced filter](query-builder.md) | Visual query builder: nested AND / OR / NOT, SorlaDB find() JSON |
 | [Editing & validation](editing.md) | Editors, parsing, validation, change hooks, keyboard, clipboard, custom editors |
 | [Selection](selection.md) | Single/multiple selection, checkboxes, ranges, bulk actions |
 | [Navbar & status bar](navbar.md) | Built-in buttons, filter chips, custom items |

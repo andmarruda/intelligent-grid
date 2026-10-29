@@ -8,7 +8,8 @@ import { SorlaStore, compareCells } from '../core/store.ts';
 import { Emitter } from '../core/events.ts';
 import { ChangeTracker } from '../core/changes.ts';
 import type { ChangeReaders, ChangeSet, ChangeSummary, FieldChange, HistoryEntry } from '../core/changes.ts';
-import { compileFilters, isFilterActive } from '../core/filters.ts';
+import { andQuery, compileFilters, isFilterActive } from '../core/filters.ts';
+import { compileQuery, describeQuery, fromSorlaQuery as parseSorlaQuery, isQueryActive, normalizeQuery, toSorlaQuery as writeSorlaQuery } from '../core/query.ts';
 import type { CompiledFilters } from '../core/filters.ts';
 import { NUMERIC_TYPES, editorText, excelFormatCode, formatCell, normalizeColumn, parseInput, validateValue } from '../core/columns.ts';
 import { CalcEngine } from '../formula/engine.ts';
@@ -24,10 +25,11 @@ import { createTranslator } from '../i18n/labels.ts';
 import { resolveEditor } from './editors.ts';
 import { openFilterMenu } from './filter-menu.ts';
 import { openConfirm } from './modal.ts';
+import { QueryBuilder } from './query-builder.ts';
 import { clear, h } from './dom.ts';
 import type {
     AppendOptions, CellChangeDetail, ChangeSource, Column, ConfirmRequest, ColumnDefinition, ConditionalFormat, CsvExportOptions, EditorInstance,
-    ChangeTrackingOptions, Filter, FilterModel, GridEvent, GridEventHandler, GridOptions, NavbarItem, NavbarOptions, Row, RowData, SelectionMode,
+    ChangeTrackingOptions, Filter, FilterModel, GridEvent, QueryNode, GridEventHandler, GridOptions, NavbarItem, NavbarOptions, Row, RowData, SelectionMode,
     SelectionOptions, SortEntry, Translator, XlsxExportOptions
 } from '../types.ts';
 
@@ -96,8 +98,9 @@ const DEFAULTS: ResolvedOptions = {
     sort: { mode: 'modifier' },
     initialSort: [],
     initialFilters: {},
+    initialQuery: null,
     selection: { mode: 'multiple', checkbox: true },
-    navbar: { search: true, filters: true, columns: true, export: ['csv', 'xlsx'], add: false, delete: false, changes: true, items: [] },
+    navbar: { search: true, filters: true, columns: true, export: ['csv', 'xlsx'], add: false, delete: false, changes: true, query: true, items: [] },
     changeTracking: { inputName: 'changes', historyLimit: 5000 },
     statusBar: true,
     renderChunk: 100,
@@ -124,6 +127,8 @@ export class IntelligentGrid {
     private _columnMap = new Map<string, Column>();
     private _sort: SortEntry[];
     private _filters: FilterModel;
+    private _queryModel: QueryNode | null = null;
+    private _queryBuilder: QueryBuilder | null = null;
     private _search = '';
     private _selected = new Set<string>();
     private _anchorId: string | null = null;
@@ -185,6 +190,7 @@ export class IntelligentGrid {
 
         this._sort = [...this.options.initialSort];
         this._filters = { ...this.options.initialFilters };
+        this._queryModel = normalizeQuery(this.options.initialQuery);
         this._append = this.options.append
             ? { pageSize: 100, serverSide: true, threshold: 200, ...this.options.append, loaded: 0, hasMore: true, loading: false, request: 0 }
             : null;
@@ -660,10 +666,69 @@ export class IntelligentGrid {
         this.emit('filterChange', { field: null, filter: null, filters: this.getFilters() });
     }
 
+    /** Column filters, search and the advanced filter. */
     clearFilters(): void {
         this._search = '';
         if (this._searchInput) this._searchInput.value = '';
+        if (this._queryModel) {
+            this._queryModel = null;
+            this.emit('queryChange', { query: null, sorlaQuery: {} });
+        }
         this.setFilters({});
+    }
+
+    /* ---------------------------------------------------------------- advanced filter (query builder) */
+
+    /** The advanced filter as built in the query builder, null when none. */
+    getQuery(): QueryNode | null {
+        return this._queryModel ? structuredClone(this._queryModel) : null;
+    }
+
+    /**
+     * Sets the advanced filter. It is combined (AND) with the column filters and the search.
+     * Incomplete rules and empty groups are dropped.
+     */
+    setQuery(query: QueryNode | null): void {
+        this._queryModel = normalizeQuery(query);
+        this._renderNavbar();
+        this._onQueryChange();
+        this.emit('queryChange', { query: this.getQuery(), sorlaQuery: this.toSorlaQuery() });
+    }
+
+    /** The advanced filter as SorlaDB / MongoDB find() JSON ({} when none). */
+    toSorlaQuery(query: QueryNode | null = this._queryModel): Record<string, unknown> {
+        return writeSorlaQuery(query, this._columnMap, this.locale);
+    }
+
+    /** Loads a SorlaDB / MongoDB query (e.g. a saved one) into the advanced filter. */
+    fromSorlaQuery(json: Record<string, unknown>): void {
+        this.setQuery(parseSorlaQuery(json));
+    }
+
+    /** Opens or closes the query builder panel. */
+    toggleQueryBuilder(open?: boolean): void {
+        if (!this._queryBuilder) return;
+        if (open === undefined) this._queryBuilder.toggle();
+        else if (open) this._queryBuilder.open();
+        else this._queryBuilder.close();
+        this._renderNavbar();
+    }
+
+    /** @internal rows matching a query (with the other filters), for the builder preview */
+    countQuery(query: QueryNode | null): number {
+        const previous = this._queryModel;
+        this._queryModel = normalizeQuery(query);
+        try {
+            const { query: sorla, predicates } = this._compiled();
+            return this.store.query({ query: sorla, predicates }).length;
+        } finally {
+            this._queryModel = previous;
+        }
+    }
+
+    /** @internal */
+    queryColumns(): Map<string, Column> {
+        return this._columnMap;
     }
 
     setSearch(text: string): void {
@@ -694,7 +759,13 @@ export class IntelligentGrid {
             const columns = this.visibleColumns;
             predicates.push(row => columns.some(c => formatCell(row[c.field], c, row, this.locale).toLocaleLowerCase(this.locale).includes(needle)));
         }
-        return { query, predicates };
+        if (!this._queryModel) return { query, predicates };
+
+        const advanced = compileQuery(this._queryModel, this._columnMap, {
+            locale: this.locale,
+            idsFor: sorla => new Set(this.store.query({ query: sorla }).map(row => row._id))
+        });
+        return { query: andQuery([query, advanced.query]), predicates: [...predicates, ...advanced.predicates] };
     }
 
     private _query(): RowData[] {
@@ -761,7 +832,10 @@ export class IntelligentGrid {
         if (!append || append.loading || !append.hasMore) return;
         append.loading = true;
         const request = append.request;
-        const params = { offset: append.loaded, limit: append.pageSize, sort: this.getSort(), filters: this.getFilters(), search: this._search };
+        const params = {
+            offset: append.loaded, limit: append.pageSize, sort: this.getSort(), filters: this.getFilters(), search: this._search,
+            query: this.getQuery(), sorlaQuery: this.toSorlaQuery()
+        };
         this._setLoading(true);
         this.emit('loadStart', params);
 
@@ -775,7 +849,7 @@ export class IntelligentGrid {
             append.total = page?.total ?? null;
             append.hasMore = page?.hasMore ?? rows.length >= append.pageSize;
 
-            const localQuery = !append.serverSide && (this._sort.length || Object.keys(this._filters).length || this._search);
+            const localQuery = !append.serverSide && (this._sort.length || Object.keys(this._filters).length || this._search || this._queryModel);
             if (localQuery) {
                 append.loading = false;
                 this.refresh();
@@ -1021,6 +1095,11 @@ export class IntelligentGrid {
         this._status = h('div', { class: 'ig-status', 'aria-live': 'polite' });
 
         if (this.options.navbar) this.root.append(this._navbar);
+        if (this.options.navbar && this.options.navbar.query) {
+            this._queryBuilder = new QueryBuilder(this);
+            this.root.append(this._queryBuilder.element);
+            this.on('queryBuilderClose', () => this._renderNavbar());
+        }
         this.root.append(this._scroller);
         if (this.options.statusBar) this.root.append(this._status);
         this.element.append(this.root);
@@ -1339,7 +1418,23 @@ export class IntelligentGrid {
             left.append(this._searchInput);
         }
 
+        if (config.query && this._queryBuilder) {
+            const active = isQueryActive(this._queryModel);
+            left.append(h('button', {
+                type: 'button',
+                class: `ig-btn ig-query-btn${active ? ' ig-active' : ''}`,
+                'aria-expanded': String(this._queryBuilder.isOpen),
+                text: this.t('advancedFilter'),
+                onclick: () => this.toggleQueryBuilder()
+            }));
+        }
+
         if (config.filters) {
+            if (this._queryModel) {
+                left.append(h('span', { class: 'ig-chip ig-chip-query' },
+                    h('span', { text: describeQuery(this._queryModel, this._columnMap, this.t, (value, column) => formatCell(value, column as Column, {}, this.locale)) }),
+                    h('button', { type: 'button', class: 'ig-chip-remove', 'aria-label': this.t('clear'), text: '×', onclick: () => this.setQuery(null) })));
+            }
             for (const [field, filter] of Object.entries(this._filters)) {
                 const column = this.getColumn(field);
                 if (!column) continue;
@@ -1347,7 +1442,7 @@ export class IntelligentGrid {
                     h('span', { text: `${column.title}: ${this._describeFilter(filter, column)}` }),
                     h('button', { type: 'button', class: 'ig-chip-remove', 'aria-label': this.t('clear'), text: '×', onclick: () => this.setFilter(field, null) })));
             }
-            if (Object.keys(this._filters).length || this._search) {
+            if (Object.keys(this._filters).length || this._search || this._queryModel) {
                 left.append(h('button', { type: 'button', class: 'ig-btn ig-btn-link', text: this.t('clearFilters'), onclick: () => this.clearFilters() }));
             }
         }
