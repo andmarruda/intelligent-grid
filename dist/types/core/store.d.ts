@@ -1,8 +1,8 @@
 import type { RowData, SorlaCollection, SorlaDatabase, SorlaInstance, SorlaSource, SortEntry } from '../types.js';
 /**
- * Values SorlaDB can store and compare safely.
- * SorlaDB 1.0 workaround: insertOne() throws on null values (_validateKeys calls Object.keys(null)),
- * and Date objects break $eq, so blanks are stored as '' and dates as ISO strings.
+ * Values as the grid stores them: blanks are '' and dates ISO strings, so every query has a single
+ * blank to look for ({ $eq: '' }) and dates compare as text. SorlaDB accepts null since 1.2, but
+ * mixing null and '' blanks would complicate every filter; rows handed to developers use null.
  */
 export declare function encodeValue(value: unknown): unknown;
 export declare const isBlank: (value: unknown) => boolean;
@@ -51,14 +51,14 @@ export declare class SorlaStore {
      */
     get(id: string): RowData | undefined;
     /**
-     * SorlaDB 1.0 workaround: there is no updateOne() yet and the document proxy rejects writes from
-     * outside the library, so values are written on the document data object.
+     * SorlaDB: values are written on the document data instead of updateOne(). updateOne() scans the
+     * collection and replaces the document object, which is too slow for formula recalculation (one
+     * write per row of a column) and would invalidate the id index above. Needs an indexed bulk write.
      * @return previous values of the changed fields
      */
     update(id: string, patch: Record<string, unknown>): Record<string, unknown>;
     /**
-     * SorlaDB 1.0 workaround: there is no deleteOne()/deleteMany() yet.
-     * @return removed rows data
+     * @return removed rows data, in collection order
      */
     remove(ids: string[]): RowData[];
     clear(): void;

@@ -39,7 +39,9 @@ export type ValidationFunction = (value: unknown, row: Row | null, column: Colum
 
 export type ValidationRule = ValidationRules | ValidationFunction;
 
-export interface ConditionalFormat {
+/** A rule: a class or style when a formula or function says so. */
+export interface RuleFormat {
+    type?: 'rule';
     /** Formula that must evaluate to TRUE, e.g. '=[@total] > 1000'. */
     formula?: string;
     when?: (value: unknown, row: Row | null) => boolean;
@@ -47,7 +49,144 @@ export interface ConditionalFormat {
     style?: Partial<CSSStyleDeclaration>;
 }
 
-export type ChangeSource = 'edit' | 'paste' | 'api';
+/** Bar under the value, as long as the value is between the column minimum and maximum. */
+export interface DataBarFormat {
+    type: 'dataBar';
+    /** CSS color (default: the --ig-databar theme color). */
+    color?: string;
+    /** Fixed ends of the scale (default: the column minimum, or 0, and maximum). */
+    min?: number;
+    max?: number;
+    /** false shows only the bar (default true). */
+    showValue?: boolean;
+}
+
+/** Background color between two or three colors (default red, yellow, green). */
+export interface ColorScaleFormat {
+    type: 'colorScale';
+    colors?: string[];
+    min?: number;
+    max?: number;
+}
+
+/** Icon before the value: low, middle or high part of the range. */
+export interface IconSetFormat {
+    type: 'iconSet';
+    /** A preset (default 'arrows') or your own icons from low to high. */
+    icons?: 'arrows' | 'traffic' | 'flags' | 'stars' | string[];
+    /** Where each next icon starts: percents of the range (default equal parts), or numbers with thresholdType: 'number'. */
+    thresholds?: number[];
+    thresholdType?: 'percent' | 'number';
+    /** High values get the first icon. */
+    reverse?: boolean;
+    min?: number;
+    max?: number;
+    /** false shows only the icon (default true). */
+    showValue?: boolean;
+}
+
+export type PresetFormat = DataBarFormat | ColorScaleFormat | IconSetFormat;
+
+export type ConditionalFormat = RuleFormat | PresetFormat;
+
+export type ChangeSource = 'edit' | 'paste' | 'fill' | 'api';
+
+/** A group of rows, as returned by grid.getGroups(). */
+export interface GroupInfo {
+    key: string;
+    /** 0 for the outermost group. */
+    level: number;
+    field: string;
+    value: unknown;
+    /** Rows in the group (with nested groups, all of them). */
+    count: number;
+    collapsed: boolean;
+}
+
+export interface ImportOptions {
+    /** 'replace' (default) swaps the data, 'append' adds the rows (one undo step). */
+    mode?: 'replace' | 'append';
+    /** The first row holds column titles or fields (default true). Without it, columns are filled in order. */
+    header?: boolean;
+    /** CSV delimiter (default: detected from the first line). */
+    delimiter?: string;
+    /** XLSX sheet name or 0-based index (default the first). */
+    sheet?: string | number;
+    /** Add columns for headers that match none (default: only when the grid has no columns). */
+    createColumns?: boolean;
+}
+
+export interface ImportError {
+    /** 1-based line of the file. */
+    line: number;
+    field: string;
+    value: unknown;
+    error: string;
+}
+
+export interface ImportResult {
+    /** Rows imported. */
+    rows: number;
+    /** Fields that received data, in file order. */
+    fields: string[];
+    /** Headers that matched no column and were skipped. */
+    skipped: string[];
+    /** Values that did not fit their column; they are imported as blanks. */
+    errors: ImportError[];
+    sheet?: string;
+}
+
+export interface SparklineOptions {
+    type?: 'line' | 'bar' | 'winloss';
+    /** CSS color (default: the text color). */
+    color?: string;
+    /** Color of negative bars (default: the --ig-negative theme color). */
+    negativeColor?: string;
+    width?: number;
+    height?: number;
+    /** Fixed ends of the scale, to compare rows (default: each row's own range). */
+    min?: number;
+    max?: number;
+}
+
+export interface DuplicateOptions {
+    /** Columns that must all be equal (default: every visible column that is not a formula). */
+    fields?: string[];
+    /** Compare text with the same case (default false, like Excel). */
+    matchCase?: boolean;
+    /** 'filtered' (default) checks the rows shown, in their order; 'all' every row. */
+    scope?: 'filtered' | 'all';
+}
+
+/** A note on a cell (Shift+F2 edits the one of the active cell). */
+export interface CellComment {
+    id: string;
+    field: string;
+    text: string;
+}
+
+/** A cell of the grid. */
+export interface CellRef {
+    id: string;
+    field: string;
+}
+
+export interface FindOptions {
+    /** Compare with the same upper and lower case (default false). */
+    matchCase?: boolean;
+    /** The whole displayed text must match (default false). */
+    wholeCell?: boolean;
+    /** Columns to search (default: every visible column). */
+    fields?: string[];
+}
+
+export interface ReplaceOptions extends FindOptions {
+    /** Replace only in these cells (default: every match). */
+    cells?: CellRef[];
+}
+
+/** Direction of the fill handle (or grid.fill()). */
+export type FillDirection = 'down' | 'up' | 'right' | 'left';
 
 export interface CellChangeDetail {
     id: string;
@@ -120,6 +259,10 @@ export interface ColumnDefinition {
     /** Calculated column formula, e.g. '=[@qty]*[@price]'. */
     formula?: string;
     footer?: FooterShortcut | string | FooterFunction;
+    /** Draw the value (a list of numbers, or text such as "1,2,3") as a small chart. */
+    sparkline?: SparklineOptions | true;
+    /** Subtotal on group rows; defaults to the footer. false shows none. */
+    subtotal?: FooterShortcut | string | FooterFunction | false;
     conditionalFormats?: ConditionalFormat[];
 
     render?: (value: unknown, row: Row | null, context: { column: Column; grid: IntelligentGrid; formatted: string }) => string | Node | null | undefined;
@@ -127,6 +270,10 @@ export interface ColumnDefinition {
     cellClass?: string | ((value: unknown, row: Row | null, column: Column) => string | null | undefined);
     headerClass?: string;
     tooltip?: string;
+    /** Freeze the column on the left or right edge while scrolling horizontally. */
+    pinned?: 'left' | 'right' | null;
+    /** Wrap long text; rows grow to fit (their height is measured). */
+    wrap?: boolean;
 }
 
 /** Column after defaults are applied. */
@@ -221,6 +368,10 @@ export interface NavbarOptions {
     changes?: boolean;
     /** "Advanced filter" button opening the visual query builder (default true). */
     query?: boolean;
+    /** Undo / redo buttons, shown when something is editable (default true). */
+    undo?: boolean;
+    /** "Import" button for .csv, .tsv and .xlsx files (default false). true replaces the data; or pass import options. */
+    import?: boolean | ImportOptions;
     items?: NavbarItem[];
 }
 
@@ -326,9 +477,12 @@ export interface SorlaCursor {
 
 export interface SorlaCollection {
     readonly all: SorlaDocument[];
-    insertOne(document: Record<string, unknown>): void;
+    insertOne(document: Record<string, unknown>): unknown;
+    insertMany(documents: Record<string, unknown>[]): unknown[];
+    deleteMany(filter: Record<string, unknown>): { deletedCount: number };
     find(query: Record<string, unknown>): SorlaCursor;
-    count(): number;
+    count(query?: Record<string, unknown>): number;
+    on(event: 'insert' | 'update' | 'replace' | 'delete' | 'change', listener: (event: { type: string; ids: unknown[] }) => void): () => void;
 }
 
 export interface GridOptions {
@@ -347,13 +501,30 @@ export interface GridOptions {
     functions?: Record<string, FormulaFunction>;
     sort?: { mode?: 'modifier' | 'toggle' };
     initialSort?: SortEntry[];
+    /** Fields to group rows by, outermost first (see setGroupBy). */
+    groupBy?: string[];
+    /** Start with every group collapsed (default false). */
+    groupsCollapsed?: boolean;
     initialFilters?: FilterModel;
     /** Advanced filter applied on load (query builder model). */
     initialQuery?: QueryNode | null;
+    /** Cell comments shown on load. */
+    comments?: CellComment[];
     selection?: Partial<SelectionOptions> | false;
     navbar?: NavbarOptions | false;
     statusBar?: boolean;
+    /** Find / replace and Go to bar on Ctrl+F, Ctrl+H and Ctrl+G (default true). */
+    find?: boolean;
+    /** @deprecated rows are virtualized: only the visible ones are rendered. Ignored. */
     renderChunk?: number;
+    /** Row height in pixels; measured from the first row when not set. */
+    rowHeight?: number | null;
+    /** Undo steps kept (default 100). */
+    undoLimit?: number;
+    /** Rows rendered above and below the visible ones (default 8). */
+    overscan?: number;
+    /** Scrollable columns are virtualized when there are more than this many (default 40). */
+    virtualColumns?: number;
     append?: AppendOptions | null;
     rowClass?: ((row: Row | null) => string | null | undefined) | null;
     rowFormats?: ConditionalFormat[];

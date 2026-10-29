@@ -88,7 +88,14 @@ export declare class ChangeTracker {
     /**
      * @param data the row right before it is removed
      */
-    recordDelete(id: string, data: RowData, formulas: CellFormulas, source?: string): void;
+    /**
+     * @return whether the row had been inserted in this session (undo needs it to restore it)
+     */
+    recordDelete(id: string, data: RowData, formulas: CellFormulas, source?: string): boolean;
+    /**
+     * Undo of a delete: the row is tracked again as before (inserted, or compared with its original).
+     */
+    restoreDeleted(id: string, wasInserted: boolean, source?: string): void;
     isInserted(id: string): boolean;
     /**
      * Fields of a row whose value differs from the original (empty for untouched rows).

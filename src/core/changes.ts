@@ -128,14 +128,33 @@ export class ChangeTracker {
     /**
      * @param data the row right before it is removed
      */
-    recordDelete(id: string, data: RowData, formulas: CellFormulas, source = 'api'): void {
-        if (this.inserted.has(id)) {
+    /**
+     * @return whether the row had been inserted in this session (undo needs it to restore it)
+     */
+    recordDelete(id: string, data: RowData, formulas: CellFormulas, source = 'api'): boolean {
+        const wasInserted = this.inserted.has(id);
+        if (wasInserted) {
             this.inserted.delete(id);
         } else {
             this.deleted.set(id, this.originals.get(id) ?? { data: { ...data }, formulas: formulas ? { ...formulas } : undefined });
         }
         this.originals.delete(id);
         this.log({ type: 'delete', id, source });
+        return wasInserted;
+    }
+
+    /**
+     * Undo of a delete: the row is tracked again as before (inserted, or compared with its original).
+     */
+    restoreDeleted(id: string, wasInserted: boolean, source = 'undo'): void {
+        if (wasInserted) {
+            this.inserted.add(id);
+        } else {
+            const snapshot = this.deleted.get(id);
+            this.deleted.delete(id);
+            if (snapshot) this.originals.set(id, snapshot);
+        }
+        this.log({ type: 'insert', id, source });
     }
 
     isInserted(id: string): boolean {

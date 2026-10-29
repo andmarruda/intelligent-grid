@@ -5,6 +5,8 @@ export declare const BOOLEAN_OPERATORS: readonly RangeOperator[];
 type FilterColumn = Pick<Column, 'field' | 'type'> & Partial<Pick<Column, 'options'>>;
 type SorlaOperators = Record<string, unknown>;
 export declare function operatorsFor(column: FilterColumn): readonly FilterOperator[];
+/** Escapes a text so it matches literally inside a RegExp. */
+export declare const escapeRegex: (text: string) => string;
 /**
  * @return SorlaDB operators for one condition, null when Sorla cannot express it
  */

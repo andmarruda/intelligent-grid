@@ -10,9 +10,9 @@
  *     test: (value, row) => boolean         developer predicate
  *   }
  *
- * Everything SorlaDB can answer goes into the query ($eq $ne $gt $gte $lt $lte $in, and $or for
- * conditions joined by "or"), the rest (case insensitive text, "contains", formulas) becomes a JS
- * predicate. SorlaDB has no $regex yet, so text matching stays in JS.
+ * Everything SorlaDB can answer goes into the query: $eq $ne $gt $gte $lt $lte $in, $or for
+ * conditions joined by "or", and case insensitive $regex for text matching (sorla-db 1.3+). Only
+ * formulas, developer tests and the few conditions SorlaDB cannot express become JS predicates.
  */
 import { DATE_TYPES, NUMERIC_TYPES, parseDateText, parseNumberText } from './columns.ts';
 import { isBlank } from './store.ts';
@@ -52,6 +52,20 @@ function coerceOperand(value: unknown, column: FilterColumn, locale: string): un
 
 const nextDay = (iso: string) => serialToISO(Math.floor(toSerial(iso)!) + 1);
 
+/** Escapes a text so it matches literally inside a RegExp. */
+export const escapeRegex = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// text operators as regular expression patterns (applied case insensitively)
+const TEXT_PATTERNS: Partial<Record<string, (text: string) => string>> = {
+    contains: text => text,
+    notContains: text => text,
+    equals: text => `^${text}$`,
+    notEquals: text => `^${text}$`,
+    startsWith: text => `^${text}`,
+    endsWith: text => `${text}$`
+};
+const NEGATED_TEXT = new Set(['notContains', 'notEquals']);
+
 /**
  * @return SorlaDB operators for one condition, null when Sorla cannot express it
  */
@@ -65,11 +79,21 @@ export function toSorla(condition: FilterCondition, column: FilterColumn, locale
     }
 
     if (!isRangeType(column)) {
-        // select values are exact, typed text filters are case insensitive like Excel
-        if (column.type === 'select' && (op === 'equals' || op === 'notEquals')) {
-            return op === 'equals' ? { $eq: condition.value } : { $ne: condition.value };
+        const pattern = TEXT_PATTERNS[op];
+        if (!pattern) return null;
+        const source = pattern(escapeRegex(String(condition.value ?? '')));
+        const negated = NEGATED_TEXT.has(op);
+
+        if (column.options) {
+            // users read labels: match them (or the raw values) here and send the matching option values
+            const regex = new RegExp(source, 'i');
+            const values = column.options.filter(o => regex.test(o.label) || regex.test(String(o.value))).map(o => o.value);
+            return negated ? { $nin: values } : { $in: values };
         }
-        return null;
+
+        // case insensitive like Excel
+        const regex = { $regex: source, $options: 'i' };
+        return negated ? { $not: regex } : regex;
     }
 
     const value = coerceOperand(condition.value, column, locale);

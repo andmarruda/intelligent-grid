@@ -1,10 +1,9 @@
 /**
  * SorlaStore: the only place where Intelligent Grid talks to SorlaDB.
  *
- * Rows live as documents of a SorlaDB collection; filtering runs through collection.find() with the
- * Sorla query language. SorlaDB 1.0 still lacks a few operations the grid needs, those workarounds
- * are kept here and marked "SorlaDB 1.0 workaround" so they can be replaced as soon as the library
- * ships them (see docs/sorla-db.md).
+ * Rows live as documents of a SorlaDB collection (sorla-db 1.5+): inserts use insertMany(), deletes
+ * deleteMany(), filtering collection.find() with the Sorla query language. The two places that still
+ * go around the library are marked "SorlaDB:" with the reason (see docs/sorla-db.md).
  */
 import { isErrorCode } from '../formula/errors.ts';
 import type { RowData, SorlaCollection, SorlaDatabase, SorlaDocument, SorlaInstance, SorlaSource, SortEntry, StoredValue } from '../types.ts';
@@ -23,9 +22,9 @@ function resolveSorla(sorla?: SorlaSource): SorlaInstance {
 }
 
 /**
- * Values SorlaDB can store and compare safely.
- * SorlaDB 1.0 workaround: insertOne() throws on null values (_validateKeys calls Object.keys(null)),
- * and Date objects break $eq, so blanks are stored as '' and dates as ISO strings.
+ * Values as the grid stores them: blanks are '' and dates ISO strings, so every query has a single
+ * blank to look for ({ $eq: '' }) and dates compare as text. SorlaDB accepts null since 1.2, but
+ * mixing null and '' blanks would complicate every filter; rows handed to developers use null.
  */
 export function encodeValue(value: unknown): unknown {
     if (value === null || value === undefined) return '';
@@ -92,9 +91,6 @@ export class SorlaStore {
         for (const [key, value] of Object.entries(row)) data[key] = encodeValue(value);
         for (const field of this.fields) if (!(field in data)) data[field] = '';
         if (this.idField && !isBlank(row[this.idField])) data._id = String(row[this.idField]);
-        if (data._id !== undefined && this.byId.has(String(data._id))) {
-            throw new Error(`Duplicate row id "${String(data._id)}"`);
-        }
         return data;
     }
 
@@ -103,18 +99,16 @@ export class SorlaStore {
      * @return ids
      */
     insert(rows: Record<string, unknown>[]): string[] {
-        const ids: string[] = [];
+        if (!rows.length) return [];
         const collection = this.collection;
-        for (const row of rows) {
-            const data = this.prepare(row);
-            // insertOne instead of insertMany: SorlaDB 1.0 insertMany logs to the console on every call
-            collection.insertOne(data);
-            const doc = collection.all[collection.all.length - 1]!;
+        const start = collection.all.length;
+        // insertMany validates the whole batch first (duplicated ids included) and stores copies
+        collection.insertMany(rows.map(row => this.prepare(row)));
+        return collection.all.slice(start).map(doc => {
             const id = String(doc._data._id);
             this.byId.set(id, doc);
-            ids.push(id);
-        }
-        return ids;
+            return id;
+        });
     }
 
     has(id: string): boolean {
@@ -129,8 +123,9 @@ export class SorlaStore {
     }
 
     /**
-     * SorlaDB 1.0 workaround: there is no updateOne() yet and the document proxy rejects writes from
-     * outside the library, so values are written on the document data object.
+     * SorlaDB: values are written on the document data instead of updateOne(). updateOne() scans the
+     * collection and replaces the document object, which is too slow for formula recalculation (one
+     * write per row of a column) and would invalidate the id index above. Needs an indexed bulk write.
      * @return previous values of the changed fields
      */
     update(id: string, patch: Record<string, unknown>): Record<string, unknown> {
@@ -146,27 +141,19 @@ export class SorlaStore {
     }
 
     /**
-     * SorlaDB 1.0 workaround: there is no deleteOne()/deleteMany() yet.
-     * @return removed rows data
+     * @return removed rows data, in collection order
      */
     remove(ids: string[]): RowData[] {
         const targets = new Set(ids.filter(id => this.byId.has(id)));
         if (!targets.size) return [];
-        const removed: RowData[] = [];
-        const documents = this.collection.all;
-        for (let i = documents.length - 1; i >= 0; i--) {
-            const data = documents[i]!._data;
-            if (targets.has(data._id)) {
-                removed.push(data);
-                documents.splice(i, 1);
-                this.byId.delete(data._id);
-            }
-        }
-        return removed.reverse();
+        const removed = this.collection.all.filter(doc => targets.has(doc._data._id)).map(doc => doc._data);
+        this.collection.deleteMany({ _id: { $in: [...targets] } });
+        for (const id of targets) this.byId.delete(id);
+        return removed;
     }
 
     clear(): void {
-        this.collection.all.length = 0;
+        this.collection.deleteMany({});
         this.byId.clear();
     }
 
@@ -198,8 +185,8 @@ export class SorlaStore {
         const rows = documents.map(doc => doc._data);
         if (!sort.length) return rows;
 
-        // SorlaDB 1.0 workaround: cursor.sort() throws "documents is not a constructor" (circular
-        // require between cursor.js and document.js), and its < > comparison has no blank/locale rules
+        // SorlaDB: cursor.sort() follows MongoDB's order (blanks first); the grid keeps Excel's order,
+        // with blanks last in both directions and errors after the values
         return rows.sort((a, b) => {
             for (const entry of sort) {
                 const result = compare(a[entry.field], b[entry.field], entry);

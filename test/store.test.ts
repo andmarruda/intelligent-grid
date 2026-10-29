@@ -68,6 +68,18 @@ test('checklist values use $in, booleans and dates compare in SorlaDB', () => {
     assert.deepEqual(names(run(store, { since: { conditions: [{ op: 'lt', value: '01/01/2022' }] } })), ['Sonia', 'Anderson']);
 });
 
+test('text filters run in SorlaDB as case insensitive $regex, select filters match labels', () => {
+    const contains = compileFilters({ name: { conditions: [{ op: 'contains', value: 'AN' }] } }, columns);
+    assert.deepEqual(contains, { query: { name: { $regex: 'AN', $options: 'i' } }, predicates: [] });
+    const notEquals = compileFilters({ name: { conditions: [{ op: 'notEquals', value: 'ana' }] } }, columns);
+    assert.deepEqual(notEquals.query, { name: { $not: { $regex: '^ana$', $options: 'i' } } });
+    const store = createStore();
+    assert.deepEqual(names(run(store, { name: { conditions: [{ op: 'equals', value: 'SONIA' }] } })), ['Sonia']);
+    assert.deepEqual(names(run(store, { name: { conditions: [{ op: 'endsWith', value: 'O' }] } })), ['bruno']);
+    assert.deepEqual(names(run(store, { city: { conditions: [{ op: 'startsWith', value: 'são' }] } })), ['Anderson', 'Carla']);
+    assert.deepEqual(names(run(store, { city: { conditions: [{ op: 'notContains', value: 'paulo' }] } })), ['Sonia', 'bruno', 'alice'], 'blanks do not contain it');
+});
+
 test('text filters are case insensitive and OR joins work', () => {
     const store = createStore();
     assert.deepEqual(names(run(store, { name: { conditions: [{ op: 'contains', value: 'AN' }] } })), ['Anderson']);

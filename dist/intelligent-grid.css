@@ -10,6 +10,13 @@
     --ig-hover: #eef4fb;
     --ig-selected: #dcebff;
     --ig-active: #1a73e8;
+    --ig-range-bg: rgba(26, 115, 232, .12);
+    --ig-find-bg: #fff3b0;
+    --ig-databar: rgba(26, 115, 232, .28);
+    --ig-comment: #d93025;
+    --ig-cf-good: #1e8e3e;
+    --ig-cf-mid: #e37400;
+    --ig-cf-bad: #d93025;
     --ig-accent: #1a73e8;
     --ig-accent-fg: #ffffff;
     --ig-danger: #c62828;
@@ -29,7 +36,13 @@
     background: var(--ig-bg);
     border: 1px solid var(--ig-border);
     border-radius: var(--ig-radius);
+    min-width: 0;
 }
+/* the element the grid is mounted in: inside a flex or grid layout it must not grow with the
+   table (the table scrolls instead). Low specificity, so your own CSS still wins. */
+.ig-host { min-width: 0; }
+/* hidden parts (panels, bars, spacer rows) stay hidden whatever their display rule */
+.ig [hidden] { display: none !important; }
 
 @media (prefers-color-scheme: dark) {
     .ig:not(.ig-light) {
@@ -42,6 +55,13 @@
         --ig-hover: #222c38;
         --ig-selected: #1d3557;
         --ig-active: #58a6ff;
+        --ig-range-bg: rgba(88, 166, 255, .18);
+        --ig-find-bg: #5c4b00;
+        --ig-databar: rgba(88, 166, 255, .35);
+        --ig-comment: #ff7b72;
+        --ig-cf-good: #57c26a;
+        --ig-cf-mid: #f0b72f;
+        --ig-cf-bad: #ff7b72;
         --ig-accent: #2f81f7;
         --ig-error-bg: #3b1d1d;
         --ig-formula: #56d364;
@@ -103,6 +123,16 @@
 .ig-query-btn.ig-active { border-color: var(--ig-accent); color: var(--ig-accent); }
 .ig-chip-query { max-width: 520px; }
 
+/* find / replace / go to bar */
+.ig-find { display: grid; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--ig-border); background: var(--ig-header-bg); }
+.ig-find-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ig-find-input { flex: 1 1 180px; min-width: 0; }
+.ig-find-input.ig-invalid { border-color: var(--ig-danger); }
+.ig-find-option { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; white-space: nowrap; }
+.ig-find-count { font-size: 12px; color: var(--ig-muted); min-width: 64px; }
+.ig-find-close { margin-left: auto; }
+.ig-cell.ig-find-match { background-color: var(--ig-find-bg); }
+
 .ig-qb {
     display: grid;
     gap: 10px;
@@ -134,13 +164,11 @@
 .ig-qb-rule.ig-qb-incomplete .ig-input:last-of-type { border-style: dashed; }
 .ig-qb-range { display: inline-flex; align-items: center; gap: 4px; }
 .ig-qb-values { min-width: 180px; }
-.ig-qb-badge { font-size: 11px; padding: 1px 6px; border-radius: 999px; background: var(--ig-changed-bg, rgba(237,139,0,.12)); color: var(--ig-muted); }
 .ig-qb-remove { border: 0; background: none; color: var(--ig-muted); cursor: pointer; font-size: 16px; line-height: 1; padding: 2px 6px; border-radius: 4px; }
 .ig-qb-remove:hover { color: var(--ig-danger); background: var(--ig-hover); }
 .ig-qb-empty { margin: 0; color: var(--ig-muted); font-size: 13px; }
 .ig-qb-details summary { cursor: pointer; font-size: 13px; color: var(--ig-muted); }
 .ig-qb-json { margin: 6px 0; padding: 8px; max-height: 220px; overflow: auto; background: var(--ig-bg); border: 1px solid var(--ig-border); border-radius: 4px; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
-.ig-qb-note { margin: 0 0 6px; font-size: 12px; color: var(--ig-muted); }
 .ig-qb-json-actions { display: flex; justify-content: flex-end; }
 .ig-qb-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
 .ig-qb-preview { font-size: 13px; color: var(--ig-muted); }
@@ -197,20 +225,71 @@
 .ig-select-col { width: 40px; }
 .ig-select-cell { text-align: center; padding: 0 !important; }
 
-.ig-row:nth-child(even) td { background: var(--ig-row-alt); }
-.ig-row:hover td { background: var(--ig-hover); }
-.ig-row.ig-selected td { background: var(--ig-selected); }
+.ig-row.ig-row-alt td { background-color: var(--ig-row-alt); }
+.ig-row td { background-color: var(--ig-bg); }
+.ig-row:hover td { background-color: var(--ig-hover); }
+.ig-spacer td { padding: 0 !important; border: 0 !important; height: 0; }
+.ig-spacer-cell { padding: 0 !important; }
+.ig-table .ig-pinned { position: sticky; z-index: 1; }
+.ig-table thead .ig-pinned, .ig-table tfoot .ig-pinned { z-index: 3; }
+.ig-table th.ig-pinned { background: var(--ig-header-bg); }
+.ig-table tfoot td.ig-pinned { background: var(--ig-header-bg); }
+.ig-table .ig-select-cell.ig-pinned-left { left: 0; }
+.ig-pinned-left-edge { box-shadow: inset -1px 0 0 var(--ig-border), 4px 0 6px -4px rgba(15, 23, 42, .25); }
+.ig-pinned-right-edge { box-shadow: inset 1px 0 0 var(--ig-border), -4px 0 6px -4px rgba(15, 23, 42, .25); }
+.ig-cell.ig-wrap { white-space: normal; overflow-wrap: anywhere; height: auto; padding-top: 6px; padding-bottom: 6px; }
+.ig-row.ig-selected td { background-color: var(--ig-selected); }
 .ig-align-right { text-align: right; }
 .ig-align-center { text-align: center; }
 .ig-cell.ig-active { box-shadow: inset 0 0 0 2px var(--ig-active); }
+/* cell comments: a corner mark, a tooltip on hover, an editor on Shift+F2 */
+.ig-cell.ig-has-comment::before { content: ""; position: absolute; top: 0; right: 0; border-style: solid; border-width: 0 7px 7px 0; border-color: transparent var(--ig-comment) transparent transparent; pointer-events: none; }
+.ig-comment-tip { position: absolute; z-index: 30; max-width: 220px; padding: 6px 8px; border: 1px solid var(--ig-border); border-radius: 4px; background: var(--ig-bg); color: var(--ig-fg); box-shadow: 0 4px 12px rgba(15, 23, 42, .18); font-size: 12px; white-space: pre-wrap; pointer-events: none; }
+.ig-comment-editor { display: grid; gap: 6px; width: 240px; padding: 8px; }
+.ig-comment-input { width: 100%; resize: vertical; font: inherit; }
+.ig-comment-actions { display: flex; justify-content: flex-end; gap: 6px; }
+
+/* sparklines */
+.ig-sparkline-cell { padding-top: 2px; padding-bottom: 2px; color: var(--ig-accent); line-height: 0; }
+.ig-sparkline { display: block; max-width: 100%; overflow: visible; }
+
+/* group rows */
+.ig-group-row td { background: var(--ig-header-bg); font-weight: 600; cursor: pointer; border-bottom: 1px solid var(--ig-border); }
+.ig-group-row td.ig-group-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ig-group-toggle { border: 0; background: none; color: inherit; font: inherit; width: 18px; padding: 0; cursor: pointer; }
+.ig-group-count { color: var(--ig-muted); font-weight: 400; }
+.ig-group-level-1 td.ig-group-label { font-weight: 500; }
+
+/* range selection: tinted cells, a border around the block, and the fill handle on its corner */
+/* body cells only: footer and header cells are sticky */
+.ig-table tbody .ig-cell:not(.ig-pinned) { position: relative; }
+.ig-cell { background-image: var(--ig-range-layer, none), var(--ig-changed-layer, none), var(--ig-bar-layer, none); }
+.ig-cell.ig-in-range { --ig-range-layer: linear-gradient(var(--ig-range-bg), var(--ig-range-bg)); }
+.ig-cell.ig-in-range::after { content: ""; position: absolute; inset: 0; pointer-events: none; border: 0 solid var(--ig-active); }
+.ig-cell.ig-range-top::after { border-top-width: 2px; }
+.ig-cell.ig-range-bottom::after { border-bottom-width: 2px; }
+.ig-cell.ig-range-left::after { border-left-width: 2px; }
+.ig-cell.ig-range-right::after { border-right-width: 2px; }
+.ig-cell.ig-in-range.ig-active { --ig-range-layer: none; box-shadow: none; }
+.ig-fill-handle { position: absolute; right: -1px; bottom: -1px; width: 7px; height: 7px; background: var(--ig-active); border: 1px solid var(--ig-bg); cursor: crosshair; z-index: 1; }
+.ig-cell.ig-fill-target { --ig-range-layer: linear-gradient(var(--ig-range-bg), var(--ig-range-bg)); outline: 1px dashed var(--ig-active); outline-offset: -2px; }
+.ig-dragging, .ig-dragging * { user-select: none; cursor: cell; }
 .ig-cell.ig-formula { color: var(--ig-formula); }
 .ig-cell.ig-negative { color: var(--ig-negative); }
-.ig-cell.ig-error { background: var(--ig-error-bg) !important; color: var(--ig-danger); }
+.ig-cell.ig-error { background-color: var(--ig-error-bg) !important; color: var(--ig-danger); }
 .ig-cell.ig-invalid { box-shadow: inset 0 0 0 2px var(--ig-danger); }
 .ig-cell.ig-editing { padding: 0; overflow: visible; }
 .ig-row-inserted > td:first-child { box-shadow: inset 3px 0 0 var(--ig-inserted); }
 .ig-row-updated > td:first-child { box-shadow: inset 3px 0 0 var(--ig-updated); }
-.ig-cell.ig-cell-changed { background-image: linear-gradient(var(--ig-changed-bg), var(--ig-changed-bg)); }
+.ig-cell.ig-cell-changed { --ig-changed-layer: linear-gradient(var(--ig-changed-bg), var(--ig-changed-bg)); }
+/* conditional format presets: data bars draw under the text, icons sit before it */
+.ig-cell.ig-databar { --ig-bar-layer: linear-gradient(to right, var(--ig-bar-color, var(--ig-databar)) var(--ig-bar, 0%), transparent var(--ig-bar, 0%)); }
+.ig-cell.ig-databar-only { color: transparent; }
+.ig-cf-icon { display: inline-block; width: 1.2em; margin-right: 4px; text-align: center; font-style: normal; }
+.ig-align-right .ig-cf-icon { float: left; }
+.ig-cf-icon-good { color: var(--ig-cf-good); }
+.ig-cf-icon-mid { color: var(--ig-cf-mid); }
+.ig-cf-icon-bad { color: var(--ig-cf-bad); }
 .ig-changes-badge { font-size: 12px; font-weight: 600; color: var(--ig-updated); padding: 0 4px; }
 .ig-editor { width: 100%; height: 100%; min-height: var(--ig-row-height); border-radius: 0; border-color: var(--ig-active); }
 .ig-editor-textarea { position: relative; z-index: 4; min-height: 80px; resize: vertical; }

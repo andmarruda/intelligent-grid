@@ -5,7 +5,6 @@ export declare class QueryBuilder {
     private draft;
     private body;
     private json;
-    private note;
     private preview;
     private previewTimer;
     constructor(grid: IntelligentGrid);

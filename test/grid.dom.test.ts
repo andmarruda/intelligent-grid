@@ -98,7 +98,8 @@ test('selection single and multiple, delete and add rows', () => {
     const grid = create();
     const changes: string[][] = [];
     grid.on('selectionChange', e => changes.push(e.detail.ids));
-    const row = (id: string) => grid.root.querySelector(`tr[data-id="${id}"] td[data-field="name"]`)!;
+    // rows are selected from the checkbox column; a click on a data cell selects the cell
+    const row = (id: string) => grid.root.querySelector(`tr[data-id="${id}"] td.ig-select-cell`)!;
     row('1').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
     row('3').dispatchEvent(new window.MouseEvent('click', { bubbles: true, shiftKey: true }));
     assert.deepEqual(grid.getSelectedIds(), ['1', '2', '3']);
@@ -110,6 +111,10 @@ test('selection single and multiple, delete and add rows', () => {
     assert.deepEqual(texts(grid, 'name'), ['book']);
     const id = grid.addRow({ name: 'New', qty: 1, price: 1 })!;
     assert.equal(grid.getRow(id)!.total, 1);
+
+    const onClick = create({ selection: { selectOnClick: true } });
+    onClick.root.querySelector('tr[data-id="2"] td[data-field="name"]')!.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    assert.deepEqual(onClick.getSelectedIds(), ['2'], 'selectOnClick: true selects rows from any cell');
 
     const single = create({ selection: { mode: 'single' } });
     single.select(['1', '2']);
@@ -144,7 +149,8 @@ test('append mode loads pages on demand', async () => {
     assert.ok(texts(grid, 'name').length >= 10);
     for (let i = 0; i < 5; i++) await grid.loadMore();
     await new Promise(r => setTimeout(r, 20));
-    assert.equal(texts(grid, 'name').length, 25);
+    assert.equal(grid.getRows('filtered').length, 25);
+    assert.ok(texts(grid, 'name').length <= 25, 'only the rows in view are in the DOM');
     assert.deepEqual(calls, [0, 10, 20]);
     await grid.loadMore();
     assert.equal(calls.length, 3, 'stops when hasMore is false');

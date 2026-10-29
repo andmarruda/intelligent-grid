@@ -14,7 +14,8 @@ const columns = new Map<string, Column>([
     ['age', normalizeColumn({ field: 'age', title: 'Age', type: 'integer' }, defaults)],
     ['city', normalizeColumn({ field: 'city', title: 'City', options: ['A', 'B', 'C'] }, defaults)],
     ['joined', normalizeColumn({ field: 'joined', title: 'Joined', type: 'date' }, defaults)],
-    ['active', normalizeColumn({ field: 'active', title: 'Active', type: 'boolean' }, defaults)]
+    ['active', normalizeColumn({ field: 'active', title: 'Active', type: 'boolean' }, defaults)],
+    ['seen', normalizeColumn({ field: 'seen', title: 'Seen', type: 'datetime' }, defaults)]
 ]);
 const people = [
     { id: 1, name: 'Ana', age: 25, city: 'A', joined: '2024-01-10', active: true },
@@ -74,21 +75,42 @@ test('NOT groups become $nor', () => {
     assert.deepEqual(run(query), ['Bruno', 'X', 'Xavier']);
 });
 
-test('text matching runs in the grid, SorlaDB subtrees still run in find()', () => {
+test('text matching runs in SorlaDB with $regex: the whole query is one find()', () => {
     const { run, finds } = setup();
     const query = group('or', [rule('name', 'startsWith', 'x'), group('and', [rule('city', 'eq', 'A'), rule('active', 'eq', true)])]);
-    assert.deepEqual(run(query), ['Ana', 'X', 'Xavier']);
-    assert.deepEqual(finds, [{ $and: [{ city: { $eq: 'A' } }, { active: { $eq: true } }] }], 'the AND subtree ran as one find()');
-    assert.deepEqual(toSorlaQuery(query, columns), {
+    const { query: sorla, predicates } = compileQuery(query, columns, { idsFor: () => new Set() });
+    assert.equal(predicates.length, 0);
+    assert.deepEqual(sorla, {
         $or: [{ name: { $regex: '^x', $options: 'i' } }, { $and: [{ city: { $eq: 'A' } }, { active: { $eq: true } }] }]
     });
+    assert.deepEqual(run(query), ['Ana', 'X', 'Xavier']);
+    assert.equal(finds.length, 0, 'no extra finds');
+    assert.deepEqual(toSorlaQuery(query, columns), sorla);
 });
 
-test('a top level AND keeps SorlaDB children in the query and moves only text rules to predicates', () => {
+test('regex special characters are escaped, select columns match their labels', () => {
+    const { run } = setup();
+    assert.deepEqual(compileQuery(rule('name', 'contains', 'a.b'), columns, { idsFor: () => new Set() }).query, { name: { $regex: 'a\\.b', $options: 'i' } });
+    assert.deepEqual(run(rule('name', 'contains', '.')), [], 'a dot is not a wildcard');
+    assert.deepEqual(compileQuery(rule('city', 'contains', 'b'), columns, { idsFor: () => new Set() }).query, { city: { $in: ['B'] } });
+});
+
+test('a group mixing SorlaDB and grid side rules still sends its SorlaDB parts to find()', () => {
+    const { run, finds } = setup();
+    // "≠ a day" on a datetime column is the one rule SorlaDB cannot express
+    // the SorlaDB subtree comes first: "or" stops at the first true part, so it is always needed
+    const query = group('or', [group('and', [rule('city', 'eq', 'A'), rule('active', 'eq', true)]), rule('seen', 'ne', '2026-01-01')]);
+    const { predicates } = compileQuery(query, columns, { idsFor: () => new Set() });
+    assert.equal(predicates.length, 1);
+    assert.equal(run(query).length, 6, 'blank datetimes count as "not that day"');
+    assert.deepEqual(finds, [{ $and: [{ city: { $eq: 'A' } }, { active: { $eq: true } }] }], 'the AND subtree ran as one find()');
+});
+
+test('a top level AND keeps SorlaDB children in the query, text rules included', () => {
     const query = group('and', [rule('age', 'between', 25, { value2: 35 }), rule('name', 'contains', 'a')]);
     const { query: sorla, predicates } = compileQuery(query, columns, { idsFor: () => new Set() });
-    assert.deepEqual(sorla, { age: { $gte: 25, $lte: 35, $ne: '' } });
-    assert.equal(predicates.length, 1);
+    assert.deepEqual(sorla, { $and: [{ age: { $gte: 25, $lte: 35, $ne: '' } }, { name: { $regex: 'a', $options: 'i' } }] });
+    assert.equal(predicates.length, 0);
     assert.deepEqual(setup().run(query), ['Ana', 'Davi'], 'Bruno is in range but has no "a"');
 });
 

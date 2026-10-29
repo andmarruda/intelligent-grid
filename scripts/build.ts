@@ -12,6 +12,7 @@ import { build } from 'esbuild';
 import type { BuildOptions } from 'esbuild';
 import { execFileSync } from 'node:child_process';
 import { readdir, readFile, rm, writeFile, copyFile, mkdir } from 'node:fs/promises';
+import { gzipSync } from 'node:zlib';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -73,3 +74,16 @@ await rewriteDeclarations(join(dist, 'types'));
 
 const files = await readdir(dist);
 console.log(`dist/ built: ${files.filter(f => !f.endsWith('.map')).join(', ')}`);
+
+// size budget for the browser bundle (gzip): raise it on purpose, not by accident
+const BUDGET = { 'intelligent-grid.min.js': 64 * 1024, 'intelligent-grid.min.css': 5 * 1024 };
+for (const [file, limit] of Object.entries(BUDGET)) {
+    const bytes = await readFile(join(dist, file));
+    const gzip = gzipSync(bytes, { level: 9 }).length;
+    const kb = (n: number) => `${(n / 1024).toFixed(1)} kB`;
+    console.log(`  ${file}: ${kb(bytes.length)} minified, ${kb(gzip)} gzip (budget ${kb(limit)})`);
+    if (gzip > limit) {
+        console.error(`${file} is over its size budget`);
+        process.exitCode = 1;
+    }
+}

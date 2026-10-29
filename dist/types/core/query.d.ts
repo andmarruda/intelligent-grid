@@ -29,8 +29,7 @@ export declare function compileQuery(node: QueryNode | null | undefined, columns
     predicates: Array<(row: RowData) => boolean>;
 };
 /**
- * The query as MongoDB / SorlaDB JSON. Rules SorlaDB 1.1 cannot run (text matching) are written as
- * case insensitive $regex conditions, which MongoDB understands.
+ * The query as MongoDB / SorlaDB JSON (text rules are case insensitive $regex conditions).
  */
 export declare function toSorlaQuery(node: QueryNode | null | undefined, columns: Map<string, QueryColumn>, locale?: string): SorlaQuery;
 /**

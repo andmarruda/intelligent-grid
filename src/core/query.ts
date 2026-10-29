@@ -9,12 +9,12 @@
  *
  *   => { $and: [ { age: { $gte: 30, $ne: '' } }, { $or: [ { name: { $eq: 'X' } }, { city: { $in: ['A', 'B'] } } ] } ] }
  *
- * Every subtree SorlaDB can express runs as one collection.find(). Text matching (contains, begins
- * with, ends with) needs $regex, which SorlaDB 1.1 does not have yet, so those rules are evaluated by
- * the grid; toSorlaQuery() still writes them as MongoDB $regex conditions.
+ * Every subtree SorlaDB can express runs as one collection.find(), text matching included ($regex,
+ * sorla-db 1.3+). The few rules SorlaDB cannot express are evaluated by the grid, and a group mixing
+ * both still sends its SorlaDB parts to find().
  */
 import { DATE_TYPES, NUMERIC_TYPES } from './columns.ts';
-import { andQuery, testCondition, toSorla } from './filters.ts';
+import { andQuery, escapeRegex, testCondition, toSorla } from './filters.ts';
 import { isBlank } from './store.ts';
 import type { Column, FilterCondition, QueryGroup, QueryNode, QueryOperator, QueryRule, RowData, Translator } from '../types.ts';
 
@@ -65,20 +65,21 @@ export function isQueryActive(node: QueryNode | null | undefined): boolean {
     return normalizeQuery(node) !== null;
 }
 
-const asCondition = (rule: QueryRule): FilterCondition => {
-    // the column filter compiler names equality "equals" for text/select columns
-    const op = rule.op === 'eq' ? 'equals' : rule.op === 'ne' ? 'notEquals' : rule.op;
+const isRange = (column: QueryColumn) => NUMERIC_TYPES.has(column.type) || DATE_TYPES.has(column.type);
+
+const asCondition = (rule: QueryRule, column: QueryColumn): FilterCondition => {
+    // the column filter names equality "equals" on text/select columns, "eq" on number/date/boolean ones
+    const textual = !isRange(column) && column.type !== 'boolean';
+    const op = textual && rule.op === 'eq' ? 'equals' : textual && rule.op === 'ne' ? 'notEquals' : rule.op;
     return { op: op as FilterCondition['op'], value: rule.value, value2: rule.value2 };
 };
-
-const isRange = (column: QueryColumn) => NUMERIC_TYPES.has(column.type) || DATE_TYPES.has(column.type);
 
 /**
  * SorlaDB operators for one rule, or null when SorlaDB cannot express it.
  */
 function ruleOperators(rule: QueryRule, column: QueryColumn, locale: string): SorlaQuery | null {
     if (LIST.has(rule.op)) return { [rule.op === 'in' ? '$in' : '$nin']: [...(rule.values ?? [])] };
-    if (TEXT_MATCH.has(rule.op)) return null;
+    if (TEXT_MATCH.has(rule.op)) return toSorla({ op: rule.op as FilterCondition['op'], value: rule.value }, column, locale);
     if (!isRange(column) && column.type !== 'boolean') {
         // text and select equality are exact in the builder (SorlaDB $eq), unlike the case insensitive column filter
         if (rule.op === 'eq') return { $eq: rule.value ?? '' };
@@ -88,7 +89,7 @@ function ruleOperators(rule: QueryRule, column: QueryColumn, locale: string): So
 }
 
 function ruleTest(rule: QueryRule, column: QueryColumn, locale: string): (row: RowData) => boolean {
-    return row => testCondition(row[rule.field], asCondition(rule), column, locale);
+    return row => testCondition(row[rule.field], asCondition(rule, column), column, locale);
 }
 
 type Compiled = { kind: 'sorla'; query: SorlaQuery } | { kind: 'js'; test: (row: RowData) => boolean };
@@ -149,12 +150,10 @@ export function compileQuery(node: QueryNode | null | undefined, columns: Map<st
     return compiled.kind === 'sorla' ? { query: compiled.query, predicates: [] } : { query: {}, predicates: [compiled.test] };
 }
 
-const escapeRegex = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const unescapeRegex = (text: string) => text.replace(/\\(.)/g, '$1');
 
 /**
- * The query as MongoDB / SorlaDB JSON. Rules SorlaDB 1.1 cannot run (text matching) are written as
- * case insensitive $regex conditions, which MongoDB understands.
+ * The query as MongoDB / SorlaDB JSON (text rules are case insensitive $regex conditions).
  */
 export function toSorlaQuery(node: QueryNode | null | undefined, columns: Map<string, QueryColumn>, locale = 'en-US'): SorlaQuery {
     const normalized = normalizeQuery(node);

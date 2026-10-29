@@ -25,7 +25,7 @@ export default tseslint.config(
         }
     },
     {
-        files: ['scripts/**', 'test/**', 'examples/**'],
+        files: ['scripts/**', 'test/**', 'examples/**', 'bench/**'],
         rules: { 'no-console': 'off' }
     }
 );

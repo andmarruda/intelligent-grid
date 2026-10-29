@@ -8,7 +8,6 @@ import { emptyGroup, isCompleteRule, queryOperatorsFor, toSorlaQuery } from '../
 import type { IntelligentGrid } from './grid.ts';
 import type { Column, QueryGroup, QueryOperator, QueryRule } from '../types.ts';
 
-const TEXT_MATCH = new Set<QueryOperator>(['contains', 'notContains', 'startsWith', 'endsWith']);
 const MAX_DEPTH = 4;
 
 export class QueryBuilder {
@@ -17,7 +16,6 @@ export class QueryBuilder {
     private draft: QueryGroup = emptyGroup();
     private body: HTMLDivElement;
     private json: HTMLPreElement;
-    private note: HTMLParagraphElement;
     private preview: HTMLSpanElement;
     private previewTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -26,7 +24,6 @@ export class QueryBuilder {
         const t = grid.t;
         this.body = h('div', { class: 'ig-qb-body' });
         this.json = h('pre', { class: 'ig-qb-json', tabindex: '0', 'aria-label': t('queryJson') });
-        this.note = h('p', { class: 'ig-qb-note', hidden: true, text: t('gridSideNote') });
         this.preview = h('span', { class: 'ig-qb-preview', 'aria-live': 'polite' });
 
         const copy = h('button', {
@@ -48,7 +45,6 @@ export class QueryBuilder {
             h('details', { class: 'ig-qb-details' },
                 h('summary', { text: t('queryJson') }),
                 this.json,
-                this.note,
                 h('div', { class: 'ig-qb-json-actions' }, copy)),
             h('div', { class: 'ig-qb-footer' },
                 this.preview,
@@ -119,10 +115,6 @@ export class QueryBuilder {
     private changed(): void {
         const json = toSorlaQuery(this.draft, this.grid.queryColumns(), this.grid.locale);
         this.json.textContent = JSON.stringify(json, null, 2);
-        // explain grid side rules as soon as one is chosen, even before it has a value
-        const usesTextMatch = (node: QueryGroup | QueryRule): boolean =>
-            node.type === 'rule' ? TEXT_MATCH.has(node.op) : node.children.some(usesTextMatch);
-        this.note.hidden = !usesTextMatch(this.draft);
         clearTimeout(this.previewTimer);
         this.previewTimer = setTimeout(() => {
             this.preview.textContent = this.grid.t('previewRows', { count: this.grid.countQuery(this.draft) });
@@ -200,7 +192,6 @@ export class QueryBuilder {
             field,
             op,
             this.renderValue(rule, column),
-            TEXT_MATCH.has(rule.op) ? h('span', { class: 'ig-qb-badge', title: t('gridSideNote'), text: 'grid' }) : null,
             h('button', {
                 type: 'button', class: 'ig-qb-remove', 'aria-label': t('removeRule'), title: t('removeRule'), text: '×',
                 onclick: () => { parent.children.splice(parent.children.indexOf(rule), 1); this.render(); }

@@ -25,27 +25,46 @@ __export(index_exports, {
   ChangeTracker: () => ChangeTracker,
   ERRORS: () => ERRORS,
   FormulaError: () => FormulaError,
+  ICON_SETS: () => ICON_SETS,
   IntelligentGrid: () => IntelligentGrid,
+  RowLayout: () => RowLayout,
   SorlaStore: () => SorlaStore,
   TYPES: () => TYPES,
+  UndoStack: () => UndoStack,
   collectDependencies: () => collectDependencies,
+  columnStats: () => columnStats,
+  columnWindow: () => columnWindow,
   compareCells: () => compareCells,
   compile: () => compile,
   compileFilters: () => compileFilters,
+  compileQuery: () => compileQuery,
   default: () => IntelligentGrid,
   defineFunction: () => defineFunction,
   defineLazyFunction: () => defineLazyFunction,
+  describeQuery: () => describeQuery,
+  detectDelimiter: () => detectDelimiter,
   evaluate: () => evaluate,
   excelFormatCode: () => excelFormatCode,
+  fillSeries: () => fillSeries,
+  fillSeriesBackward: () => fillSeriesBackward,
   formatCell: () => formatCell,
   formatValue: () => formatValue,
+  fromSorlaQuery: () => fromSorlaQuery,
+  iconFor: () => iconFor,
   isFormula: () => isFormula,
   listFunctions: () => listFunctions,
+  normalizeQuery: () => normalizeQuery,
   operatorsFor: () => operatorsFor,
   parse: () => parse,
+  parseDelimited: () => parseDelimited,
   parseInput: () => parseInput,
+  readXlsx: () => readXlsx,
+  scaleColor: () => scaleColor,
+  sparkline: () => sparkline,
+  sparklineValues: () => sparklineValues,
   toCSV: () => toCSV,
   toExcelFormula: () => toExcelFormula,
+  toSorlaQuery: () => toSorlaQuery,
   toXLSX: () => toXLSX,
   validateValue: () => validateValue,
   zip: () => zip
@@ -130,9 +149,6 @@ var SorlaStore = class {
     for (const [key, value] of Object.entries(row)) data[key] = encodeValue(value);
     for (const field of this.fields) if (!(field in data)) data[field] = "";
     if (this.idField && !isBlank(row[this.idField])) data._id = String(row[this.idField]);
-    if (data._id !== void 0 && this.byId.has(String(data._id))) {
-      throw new Error(`Duplicate row id "${String(data._id)}"`);
-    }
     return data;
   }
   /**
@@ -140,17 +156,15 @@ var SorlaStore = class {
    * @return ids
    */
   insert(rows) {
-    const ids = [];
+    if (!rows.length) return [];
     const collection = this.collection;
-    for (const row of rows) {
-      const data = this.prepare(row);
-      collection.insertOne(data);
-      const doc = collection.all[collection.all.length - 1];
+    const start = collection.all.length;
+    collection.insertMany(rows.map((row) => this.prepare(row)));
+    return collection.all.slice(start).map((doc) => {
       const id = String(doc._data._id);
       this.byId.set(id, doc);
-      ids.push(id);
-    }
-    return ids;
+      return id;
+    });
   }
   has(id) {
     return this.byId.has(id);
@@ -162,8 +176,9 @@ var SorlaStore = class {
     return this.byId.get(id)?._data;
   }
   /**
-   * SorlaDB 1.0 workaround: there is no updateOne() yet and the document proxy rejects writes from
-   * outside the library, so values are written on the document data object.
+   * SorlaDB: values are written on the document data instead of updateOne(). updateOne() scans the
+   * collection and replaces the document object, which is too slow for formula recalculation (one
+   * write per row of a column) and would invalidate the id index above. Needs an indexed bulk write.
    * @return previous values of the changed fields
    */
   update(id, patch) {
@@ -178,26 +193,18 @@ var SorlaStore = class {
     return previous;
   }
   /**
-   * SorlaDB 1.0 workaround: there is no deleteOne()/deleteMany() yet.
-   * @return removed rows data
+   * @return removed rows data, in collection order
    */
   remove(ids) {
     const targets = new Set(ids.filter((id) => this.byId.has(id)));
     if (!targets.size) return [];
-    const removed = [];
-    const documents = this.collection.all;
-    for (let i = documents.length - 1; i >= 0; i--) {
-      const data = documents[i]._data;
-      if (targets.has(data._id)) {
-        removed.push(data);
-        documents.splice(i, 1);
-        this.byId.delete(data._id);
-      }
-    }
-    return removed.reverse();
+    const removed = this.collection.all.filter((doc) => targets.has(doc._data._id)).map((doc) => doc._data);
+    this.collection.deleteMany({ _id: { $in: [...targets] } });
+    for (const id of targets) this.byId.delete(id);
+    return removed;
   }
   clear() {
-    this.collection.all.length = 0;
+    this.collection.deleteMany({});
     this.byId.clear();
   }
   count() {
@@ -348,14 +355,32 @@ var ChangeTracker = class {
   /**
    * @param data the row right before it is removed
    */
+  /**
+   * @return whether the row had been inserted in this session (undo needs it to restore it)
+   */
   recordDelete(id, data, formulas, source = "api") {
-    if (this.inserted.has(id)) {
+    const wasInserted = this.inserted.has(id);
+    if (wasInserted) {
       this.inserted.delete(id);
     } else {
       this.deleted.set(id, this.originals.get(id) ?? { data: { ...data }, formulas: formulas ? { ...formulas } : void 0 });
     }
     this.originals.delete(id);
     this.log({ type: "delete", id, source });
+    return wasInserted;
+  }
+  /**
+   * Undo of a delete: the row is tracked again as before (inserted, or compared with its original).
+   */
+  restoreDeleted(id, wasInserted, source = "undo") {
+    if (wasInserted) {
+      this.inserted.add(id);
+    } else {
+      const snapshot = this.deleted.get(id);
+      this.deleted.delete(id);
+      if (snapshot) this.originals.set(id, snapshot);
+    }
+    this.log({ type: "insert", id, source });
   }
   isInserted(id) {
     return this.inserted.has(id);
@@ -442,6 +467,67 @@ function sameValue(a, b) {
   if ((a === null || a === void 0 || a === "") && (b === null || b === void 0 || b === "")) return true;
   return typeof a === "number" && typeof b === "number" && Number.isNaN(a) && Number.isNaN(b);
 }
+
+// src/core/undo.ts
+var UndoStack = class {
+  limit;
+  undoSteps = [];
+  redoSteps = [];
+  open = null;
+  depth = 0;
+  constructor(limit = 100) {
+    this.limit = limit;
+  }
+  get canUndo() {
+    return this.undoSteps.length > 0;
+  }
+  get canRedo() {
+    return this.redoSteps.length > 0;
+  }
+  /** Label of the step Ctrl+Z would undo. */
+  get undoLabel() {
+    return this.undoSteps.at(-1)?.label ?? null;
+  }
+  get redoLabel() {
+    return this.redoSteps.at(-1)?.label ?? null;
+  }
+  /** Starts (or joins) a step; nested calls end up in the outermost one. */
+  begin(label) {
+    if (this.depth++ === 0) this.open = { label, changes: [] };
+  }
+  end() {
+    if (this.depth === 0) return;
+    if (--this.depth > 0) return;
+    const step = this.open;
+    this.open = null;
+    if (step && step.changes.length) this.push(step);
+  }
+  record(change) {
+    if (this.open) this.open.changes.push(change);
+    else this.push({ label: change.kind === "cell" ? "edit" : change.kind, changes: [change] });
+  }
+  push(step) {
+    this.undoSteps.push(step);
+    if (this.undoSteps.length > this.limit) this.undoSteps.splice(0, this.undoSteps.length - this.limit);
+    this.redoSteps = [];
+  }
+  takeUndo() {
+    const step = this.undoSteps.pop();
+    if (step) this.redoSteps.push(step);
+    return step;
+  }
+  takeRedo() {
+    const step = this.redoSteps.pop();
+    if (step) this.undoSteps.push(step);
+    return step;
+  }
+  clear() {
+    this.undoSteps = [];
+    this.redoSteps = [];
+    this.open = null;
+    this.depth = 0;
+  }
+};
 
 // src/formula/dates.ts
 var MS_PER_DAY = 864e5;
@@ -1078,6 +1164,316 @@ function validateValue(value, column, row) {
   return null;
 }
 
+// src/core/fill.ts
+var TRAILING_NUMBER = /^(.*?)(\d+)$/;
+var isNumber = (value) => typeof value === "number" && Number.isFinite(value);
+function stepOf(values) {
+  if (values.length < 2) return null;
+  const step = values[1] - values[0];
+  for (let i = 2; i < values.length; i++) {
+    if (Math.abs(values[i] - values[i - 1] - step) > 1e-9) return null;
+  }
+  return step;
+}
+function fillSeries(source, count, type = "text") {
+  if (!source.length || count <= 0) return [];
+  const repeat = () => Array.from({ length: count }, (_, i) => source[i % source.length]);
+  if (DATE_TYPES.has(type) && source.every((v) => typeof v === "string" && toSerial(v) !== null)) {
+    const serials = source.map((v) => toSerial(v));
+    const step = source.length === 1 ? 1 : stepOf(serials);
+    if (step === null) return repeat();
+    const last = serials.at(-1);
+    return Array.from({ length: count }, (_, i) => serialToISO(last + step * (i + 1), type === "datetime"));
+  }
+  if (source.every(isNumber)) {
+    const step = stepOf(source);
+    if (step === null) return repeat();
+    const last = source.at(-1);
+    return Array.from({ length: count }, (_, i) => Number((last + step * (i + 1)).toPrecision(12)));
+  }
+  if (source.every((v) => typeof v === "string" && TRAILING_NUMBER.test(v))) {
+    const parts = source.map((v) => TRAILING_NUMBER.exec(v));
+    const prefix = parts[0][1];
+    if (parts.every((p) => p[1] === prefix)) {
+      const numbers2 = parts.map((p) => Number(p[2]));
+      const step = numbers2.length === 1 ? 1 : stepOf(numbers2);
+      if (step !== null) {
+        const width = parts[0][2].length;
+        const last = numbers2.at(-1);
+        return Array.from({ length: count }, (_, i) => {
+          const n = last + step * (i + 1);
+          return n < 0 ? `${prefix}${n}` : `${prefix}${String(n).padStart(width, "0")}`;
+        });
+      }
+    }
+  }
+  return repeat();
+}
+function fillSeriesBackward(source, count, type = "text") {
+  return fillSeries([...source].reverse(), count, type).reverse();
+}
+
+// src/import/delimited.ts
+function detectDelimiter(text) {
+  const line = text.slice(0, text.search(/\r?\n|$/));
+  let best = ",";
+  let bestCount = 0;
+  for (const candidate of [",", ";", "	"]) {
+    let count = 0;
+    let quoted = false;
+    for (const char of line) {
+      if (char === '"') quoted = !quoted;
+      else if (char === candidate && !quoted) count++;
+    }
+    if (count > bestCount) {
+      best = candidate;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+function parseDelimited(text, delimiter = detectDelimiter(text)) {
+  if (text.charCodeAt(0) === 65279) text = text.slice(1);
+  const rows = [];
+  let row = [];
+  let field = "";
+  let i = 0;
+  const length = text.length;
+  while (i < length) {
+    const char = text[i];
+    if (char === '"' && field === "") {
+      i++;
+      while (i < length) {
+        if (text[i] === '"') {
+          if (text[i + 1] === '"') {
+            field += '"';
+            i += 2;
+            continue;
+          }
+          i++;
+          break;
+        }
+        field += text[i];
+        i++;
+      }
+      continue;
+    }
+    if (char === delimiter) {
+      row.push(field);
+      field = "";
+    } else if (char === "\n" || char === "\r") {
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = "";
+      if (char === "\r" && text[i + 1] === "\n") i++;
+    } else {
+      field += char;
+    }
+    i++;
+  }
+  if (field !== "" || row.length) {
+    row.push(field);
+    rows.push(row);
+  }
+  return rows;
+}
+
+// src/import/unzip.ts
+var decoder = new TextDecoder();
+function listZip(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let end = -1;
+  for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 65558); i--) {
+    if (view.getUint32(i, true) === 101010256) {
+      end = i;
+      break;
+    }
+  }
+  if (end === -1) throw new Error("Not a zip file");
+  const count = view.getUint16(end + 10, true);
+  let position = view.getUint32(end + 16, true);
+  const entries = /* @__PURE__ */ new Map();
+  for (let n = 0; n < count; n++) {
+    if (view.getUint32(position, true) !== 33639248) throw new Error("Broken zip directory");
+    const method = view.getUint16(position + 10, true);
+    const compressedSize = view.getUint32(position + 20, true);
+    const nameLength = view.getUint16(position + 28, true);
+    const extraLength = view.getUint16(position + 30, true);
+    const commentLength = view.getUint16(position + 32, true);
+    const offset = view.getUint32(position + 42, true);
+    const name = decoder.decode(bytes.subarray(position + 46, position + 46 + nameLength));
+    entries.set(name, { name, method, compressedSize, offset });
+    position += 46 + nameLength + extraLength + commentLength;
+  }
+  return entries;
+}
+async function readZipText(bytes, entry) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (view.getUint32(entry.offset, true) !== 67324752) throw new Error(`Broken zip entry ${entry.name}`);
+  const start = entry.offset + 30 + view.getUint16(entry.offset + 26, true) + view.getUint16(entry.offset + 28, true);
+  const data = bytes.subarray(start, start + entry.compressedSize);
+  if (entry.method === 0) return decoder.decode(data);
+  if (entry.method !== 8) throw new Error(`Unsupported zip compression ${entry.method}`);
+  if (typeof DecompressionStream === "undefined") throw new Error("Reading .xlsx needs DecompressionStream (a current browser or Node 18+)");
+  const source = new ReadableStream({
+    start(controller) {
+      controller.enqueue(data.slice());
+      controller.close();
+    }
+  });
+  return new Response(source.pipeThrough(new DecompressionStream("deflate-raw"))).text();
+}
+
+// src/import/xlsx-read.ts
+var ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
+var unescapeXml = (text) => text.replace(/&(#x[0-9a-f]+|#\d+|\w+);/gi, (match, code) => {
+  if (code[0] === "#") return String.fromCodePoint(code[1] === "x" || code[1] === "X" ? parseInt(code.slice(2), 16) : Number(code.slice(1)));
+  return ENTITIES[code] ?? match;
+});
+var attribute = (tag, name) => {
+  const match = new RegExp(`\\s${name}="([^"]*)"`).exec(tag);
+  return match ? unescapeXml(match[1]) : null;
+};
+function textOf(fragment) {
+  let text = "";
+  for (const match of fragment.replace(/<rPh\b[\s\S]*?<\/rPh>/g, "").matchAll(/<t\b[^>]*>([\s\S]*?)<\/t>|<t\b[^>]*\/>/g)) text += unescapeXml(match[1] ?? "");
+  return text;
+}
+function columnIndex(reference) {
+  let index = 0;
+  for (const char of reference) {
+    const code = char.charCodeAt(0);
+    if (code < 65 || code > 90) break;
+    index = index * 26 + code - 64;
+  }
+  return index - 1;
+}
+var DATE_FORMAT_IDS = /* @__PURE__ */ new Set([14, 15, 16, 17, 18, 19, 20, 21, 22, 45, 46, 47]);
+function isDateFormat2(code) {
+  const bare = code.replace(/"[^"]*"|\[[^\]]*\]|\\./g, "");
+  return /[dmyhs]/i.test(bare) && !/^[#0.,%\s]*$/.test(bare);
+}
+function dateStyles(styles) {
+  const custom = /* @__PURE__ */ new Map();
+  for (const match of styles.matchAll(/<numFmt\b[^>]*>/g)) {
+    custom.set(Number(attribute(match[0], "numFmtId")), attribute(match[0], "formatCode") ?? "");
+  }
+  const xfs = /<cellXfs\b[^>]*>([\s\S]*?)<\/cellXfs>/.exec(styles)?.[1] ?? "";
+  return [...xfs.matchAll(/<xf\b[^>]*>/g)].map((match) => {
+    const id = Number(attribute(match[0], "numFmtId") ?? 0);
+    const code = custom.get(id);
+    const isDate = code !== void 0 ? isDateFormat2(code) : DATE_FORMAT_IDS.has(id);
+    if (!isDate) return null;
+    const withTime = code !== void 0 ? /[hs]/i.test(code.replace(/"[^"]*"|\[[^\]]*\]/g, "")) : id === 22 || id >= 18 && id <= 21 || id >= 45;
+    return withTime ? "datetime" : "date";
+  });
+}
+async function readXlsx(input, { sheet = 0 } = {}) {
+  const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
+  const entries = listZip(bytes);
+  const read = async (name) => {
+    const entry = entries.get(name);
+    return entry ? readZipText(bytes, entry) : null;
+  };
+  const workbook = await read("xl/workbook.xml");
+  if (!workbook) throw new Error("Not an .xlsx file (xl/workbook.xml is missing)");
+  const relations = await read("xl/_rels/workbook.xml.rels") ?? "";
+  const targets = new Map([...relations.matchAll(/<Relationship\b[^>]*>/g)].map((m) => [attribute(m[0], "Id"), attribute(m[0], "Target")]));
+  const sheets = [...workbook.matchAll(/<sheet\b[^>]*>/g)].map((m) => ({ name: attribute(m[0], "name") ?? "", target: targets.get(attribute(m[0], "r:id")) ?? null }));
+  const chosen = typeof sheet === "number" ? sheets[sheet] : sheets.find((s) => s.name === sheet);
+  if (!chosen?.target) throw new Error(`Sheet ${JSON.stringify(sheet)} not found`);
+  const path = chosen.target.startsWith("/") ? chosen.target.slice(1) : `xl/${chosen.target.replace(/^\.\//, "")}`;
+  const date1904 = /<workbookPr\b[^>]*\sdate1904="(1|true)"/.test(workbook);
+  const shared = [...(await read("xl/sharedStrings.xml") ?? "").matchAll(/<si\b[^>]*>([\s\S]*?)<\/si>/g)].map((m) => textOf(m[1]));
+  const styles = dateStyles(await read("xl/styles.xml") ?? "");
+  const xml2 = await read(path);
+  if (xml2 === null) throw new Error(`Sheet file ${path} is missing`);
+  const rows = [];
+  for (const rowMatch of xml2.matchAll(/<row\b([^>]*?)(?:\/>|>([\s\S]*?)<\/row>)/g)) {
+    const rowNumber = Number(attribute(rowMatch[1], "r") ?? rows.length + 1);
+    const cells = [];
+    let next = 0;
+    for (const cellMatch of (rowMatch[2] ?? "").matchAll(/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
+      const tag = cellMatch[1];
+      const body = cellMatch[2] ?? "";
+      const reference = attribute(tag, "r");
+      const index = reference ? columnIndex(reference) : next;
+      next = index + 1;
+      const type = attribute(tag, "t") ?? "n";
+      const raw = /<v>([\s\S]*?)<\/v>/.exec(body)?.[1];
+      let value = null;
+      if (type === "inlineStr") value = textOf(body);
+      else if (raw === void 0) value = null;
+      else if (type === "s") value = shared[Number(raw)] ?? "";
+      else if (type === "str" || type === "e") value = unescapeXml(raw);
+      else if (type === "b") value = raw === "1";
+      else {
+        const number = Number(raw);
+        const kind = styles[Number(attribute(tag, "s") ?? 0)];
+        value = kind && Number.isFinite(number) ? serialToISO(number + (date1904 ? 1462 : 0), kind === "datetime") : number;
+      }
+      while (cells.length < index) cells.push(null);
+      cells[index] = value;
+    }
+    while (rows.length < rowNumber - 1) rows.push([]);
+    rows[rowNumber - 1] = cells;
+  }
+  return { name: chosen.name, rows };
+}
+
+// src/core/presets.ts
+var ICON_SETS = {
+  arrows: [{ icon: "\u2193", tone: "bad" }, { icon: "\u2192", tone: "mid" }, { icon: "\u2191", tone: "good" }],
+  traffic: [{ icon: "\u25CF", tone: "bad" }, { icon: "\u25CF", tone: "mid" }, { icon: "\u25CF", tone: "good" }],
+  flags: [{ icon: "\u2691", tone: "bad" }, { icon: "\u2691", tone: "mid" }, { icon: "\u2691", tone: "good" }],
+  stars: [{ icon: "\u2606", tone: "mid" }, { icon: "\u2BEA", tone: "mid" }, { icon: "\u2605", tone: "mid" }]
+};
+var DEFAULT_COLORS = ["#f8696b", "#ffeb84", "#63be7b"];
+var isPreset = (format) => format.type === "dataBar" || format.type === "colorScale" || format.type === "iconSet";
+function columnStats(values) {
+  let min = Infinity;
+  let max = -Infinity;
+  for (const value of values) {
+    if (typeof value !== "number" || !Number.isFinite(value)) continue;
+    if (value < min) min = value;
+    if (value > max) max = value;
+  }
+  return min === Infinity ? null : { min, max };
+}
+function ratio(value, low, high) {
+  if (high <= low) return 1;
+  return Math.max(0, Math.min(1, (value - low) / (high - low)));
+}
+function parseHex(color) {
+  const match = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(color.trim());
+  if (!match) return null;
+  const hex = match[1].length === 3 ? [...match[1]].map((c) => c + c).join("") : match[1];
+  return [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16));
+}
+function scaleColor(colors, t) {
+  if (colors.length === 1) return colors[0];
+  const scaled = Math.max(0, Math.min(1, t)) * (colors.length - 1);
+  const index = Math.min(colors.length - 2, Math.floor(scaled));
+  const local = scaled - index;
+  const a = parseHex(colors[index]);
+  const b = parseHex(colors[index + 1]);
+  if (!a || !b) return colors[Math.round(scaled)];
+  const mix = a.map((channel, i) => Math.round(channel + (b[i] - channel) * local));
+  return `rgb(${mix.join(", ")})`;
+}
+var colorScaleColors = (format) => format.colors && format.colors.length ? format.colors : DEFAULT_COLORS;
+function iconFor(format, value, stats) {
+  const set = Array.isArray(format.icons) ? format.icons.map((icon) => ({ icon, tone: "custom" })) : ICON_SETS[format.icons ?? "arrows"] ?? ICON_SETS.arrows;
+  const icons = format.reverse ? [...set].reverse() : set;
+  const parts = icons.length;
+  const thresholds = format.thresholds ?? Array.from({ length: parts - 1 }, (_, i) => (i + 1) * 100 / parts);
+  const position = format.thresholdType === "number" ? value : ratio(value, format.min ?? stats.min, format.max ?? stats.max) * 100;
+  let index = 0;
+  while (index < thresholds.length && position >= thresholds[index]) index++;
+  return icons[Math.min(index, parts - 1)];
+}
+
 // src/core/filters.ts
 var TEXT_OPERATORS = ["contains", "notContains", "equals", "notEquals", "startsWith", "endsWith", "empty", "notEmpty"];
 var RANGE_OPERATORS = ["eq", "ne", "gt", "gte", "lt", "lte", "between", "empty", "notEmpty"];
@@ -1101,6 +1497,16 @@ function coerceOperand(value, column, locale) {
   return value;
 }
 var nextDay = (iso) => serialToISO(Math.floor(toSerial(iso)) + 1);
+var escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+var TEXT_PATTERNS = {
+  contains: (text) => text,
+  notContains: (text) => text,
+  equals: (text) => `^${text}$`,
+  notEquals: (text) => `^${text}$`,
+  startsWith: (text) => `^${text}`,
+  endsWith: (text) => `${text}$`
+};
+var NEGATED_TEXT = /* @__PURE__ */ new Set(["notContains", "notEquals"]);
 function toSorla(condition, column, locale) {
   const { op } = condition;
   if (op === "empty") return { $eq: "" };
@@ -1109,10 +1515,17 @@ function toSorla(condition, column, locale) {
     return op === "eq" ? { $eq: coerceOperand(condition.value, column, locale) } : null;
   }
   if (!isRangeType(column)) {
-    if (column.type === "select" && (op === "equals" || op === "notEquals")) {
-      return op === "equals" ? { $eq: condition.value } : { $ne: condition.value };
+    const pattern = TEXT_PATTERNS[op];
+    if (!pattern) return null;
+    const source = pattern(escapeRegex(String(condition.value ?? "")));
+    const negated = NEGATED_TEXT.has(op);
+    if (column.options) {
+      const regex2 = new RegExp(source, "i");
+      const values = column.options.filter((o) => regex2.test(o.label) || regex2.test(String(o.value))).map((o) => o.value);
+      return negated ? { $nin: values } : { $in: values };
     }
-    return null;
+    const regex = { $regex: source, $options: "i" };
+    return negated ? { $not: regex } : regex;
   }
   const value = coerceOperand(condition.value, column, locale);
   if (value === null) return {};
@@ -1285,14 +1698,15 @@ function normalizeQuery(node) {
 function isQueryActive(node) {
   return normalizeQuery(node) !== null;
 }
-var asCondition = (rule) => {
-  const op = rule.op === "eq" ? "equals" : rule.op === "ne" ? "notEquals" : rule.op;
+var isRange = (column) => NUMERIC_TYPES.has(column.type) || DATE_TYPES.has(column.type);
+var asCondition = (rule, column) => {
+  const textual = !isRange(column) && column.type !== "boolean";
+  const op = textual && rule.op === "eq" ? "equals" : textual && rule.op === "ne" ? "notEquals" : rule.op;
   return { op, value: rule.value, value2: rule.value2 };
 };
-var isRange = (column) => NUMERIC_TYPES.has(column.type) || DATE_TYPES.has(column.type);
 function ruleOperators(rule, column, locale) {
   if (LIST.has(rule.op)) return { [rule.op === "in" ? "$in" : "$nin"]: [...rule.values ?? []] };
-  if (TEXT_MATCH.has(rule.op)) return null;
+  if (TEXT_MATCH.has(rule.op)) return toSorla({ op: rule.op, value: rule.value }, column, locale);
   if (!isRange(column) && column.type !== "boolean") {
     if (rule.op === "eq") return { $eq: rule.value ?? "" };
     if (rule.op === "ne") return { $ne: rule.value ?? "" };
@@ -1300,7 +1714,7 @@ function ruleOperators(rule, column, locale) {
   return toSorla({ op: rule.op, value: rule.value, value2: rule.value2 }, column, locale);
 }
 function ruleTest(rule, column, locale) {
-  return (row) => testCondition(row[rule.field], asCondition(rule), column, locale);
+  return (row) => testCondition(row[rule.field], asCondition(rule, column), column, locale);
 }
 function compileNode(node, columns, options) {
   const locale = options.locale ?? "en-US";
@@ -1339,7 +1753,6 @@ function compileQuery(node, columns, options) {
   const compiled = compileNode(normalized, columns, options);
   return compiled.kind === "sorla" ? { query: compiled.query, predicates: [] } : { query: {}, predicates: [compiled.test] };
 }
-var escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 var unescapeRegex = (text) => text.replace(/\\(.)/g, "$1");
 function toSorlaQuery(node, columns, locale = "en-US") {
   const normalized = normalizeQuery(node);
@@ -3092,6 +3505,32 @@ function download(data, filename, mime) {
 var en = {
   search: "Search\u2026",
   advancedFilter: "Advanced filter",
+  undo: "Undo",
+  redo: "Redo",
+  find: "Find",
+  findNext: "Next match (Enter)",
+  findPrevious: "Previous match (Shift+Enter)",
+  findCount: "{current} of {count}",
+  noMatches: "No matches",
+  matchCase: "Match case",
+  wholeCell: "Whole cell",
+  replace: "Replace",
+  replaceAll: "Replace all",
+  replaceWith: "Replace with",
+  replacedCount: "{count} replaced",
+  goTo: "Go to",
+  goToHint: "Row number, optionally a column: 120 Price",
+  close: "Close",
+  expandGroup: "Expand group",
+  collapseGroup: "Collapse group",
+  blankGroup: "(blank)",
+  importFile: "Import",
+  comment: "Comment",
+  saveComment: "Save",
+  deleteComment: "Delete",
+  importDone: "{count} row(s) imported",
+  importErrors: "{count} row(s) imported, {errors} value(s) did not fit and were left blank",
+  confirmImport: "Importing replaces the rows and discards {count} unsaved change(s).",
   addRule: "+ Rule",
   addGroup: "+ Group",
   removeRule: "Remove rule",
@@ -3104,7 +3543,6 @@ var en = {
   queryJson: "find() query (JSON)",
   copyJson: "Copy JSON",
   copied: "Copied",
-  gridSideNote: "Text matching (contains, begins with, ends with) is evaluated by the grid: SorlaDB has no $regex yet. Everything else runs in find().",
   previewRows: "{count} matching row(s)",
   queryEmpty: "Add a rule to start.",
   op_in: "Is one of",
@@ -3176,6 +3614,32 @@ var en = {
 var ptBR = {
   search: "Pesquisar\u2026",
   advancedFilter: "Filtro avan\xE7ado",
+  undo: "Desfazer",
+  redo: "Refazer",
+  find: "Localizar",
+  findNext: "Pr\xF3xima ocorr\xEAncia (Enter)",
+  findPrevious: "Ocorr\xEAncia anterior (Shift+Enter)",
+  findCount: "{current} de {count}",
+  noMatches: "Nenhuma ocorr\xEAncia",
+  matchCase: "Diferenciar mai\xFAsculas",
+  wholeCell: "C\xE9lula inteira",
+  replace: "Substituir",
+  replaceAll: "Substituir tudo",
+  replaceWith: "Substituir por",
+  replacedCount: "{count} substitu\xEDda(s)",
+  goTo: "Ir para",
+  goToHint: "N\xFAmero da linha e, se quiser, a coluna: 120 Pre\xE7o",
+  close: "Fechar",
+  expandGroup: "Expandir grupo",
+  collapseGroup: "Recolher grupo",
+  blankGroup: "(vazio)",
+  importFile: "Importar",
+  comment: "Coment\xE1rio",
+  saveComment: "Salvar",
+  deleteComment: "Excluir",
+  importDone: "{count} linha(s) importada(s)",
+  importErrors: "{count} linha(s) importada(s), {errors} valor(es) inv\xE1lido(s) ficaram em branco",
+  confirmImport: "Importar substitui as linhas e descarta {count} altera\xE7\xE3o(\xF5es) n\xE3o salva(s).",
   addRule: "+ Regra",
   addGroup: "+ Grupo",
   removeRule: "Remover regra",
@@ -3188,7 +3652,6 @@ var ptBR = {
   queryJson: "Consulta do find() (JSON)",
   copyJson: "Copiar JSON",
   copied: "Copiado",
-  gridSideNote: "Busca em texto (cont\xE9m, come\xE7a com, termina com) \xE9 avaliada pelo grid: o SorlaDB ainda n\xE3o tem $regex. Todo o resto roda no find().",
   previewRows: "{count} linha(s) encontrada(s)",
   queryEmpty: "Adicione uma regra para come\xE7ar.",
   op_in: "\xC9 um de",
@@ -3532,7 +3995,6 @@ function openConfirm(container, request, t) {
 }
 
 // src/ui/query-builder.ts
-var TEXT_MATCH2 = /* @__PURE__ */ new Set(["contains", "notContains", "startsWith", "endsWith"]);
 var MAX_DEPTH = 4;
 var QueryBuilder = class {
   element;
@@ -3540,7 +4002,6 @@ var QueryBuilder = class {
   draft = emptyGroup();
   body;
   json;
-  note;
   preview;
   previewTimer;
   constructor(grid) {
@@ -3548,7 +4009,6 @@ var QueryBuilder = class {
     const t = grid.t;
     this.body = h("div", { class: "ig-qb-body" });
     this.json = h("pre", { class: "ig-qb-json", tabindex: "0", "aria-label": t("queryJson") });
-    this.note = h("p", { class: "ig-qb-note", hidden: true, text: t("gridSideNote") });
     this.preview = h("span", { class: "ig-qb-preview", "aria-live": "polite" });
     const copy = h("button", {
       type: "button",
@@ -3575,7 +4035,6 @@ var QueryBuilder = class {
         { class: "ig-qb-details" },
         h("summary", { text: t("queryJson") }),
         this.json,
-        this.note,
         h("div", { class: "ig-qb-json-actions" }, copy)
       ),
       h(
@@ -3642,8 +4101,6 @@ var QueryBuilder = class {
   changed() {
     const json = toSorlaQuery(this.draft, this.grid.queryColumns(), this.grid.locale);
     this.json.textContent = JSON.stringify(json, null, 2);
-    const usesTextMatch = (node) => node.type === "rule" ? TEXT_MATCH2.has(node.op) : node.children.some(usesTextMatch);
-    this.note.hidden = !usesTextMatch(this.draft);
     clearTimeout(this.previewTimer);
     this.previewTimer = setTimeout(() => {
       this.preview.textContent = this.grid.t("previewRows", { count: this.grid.countQuery(this.draft) });
@@ -3741,7 +4198,6 @@ var QueryBuilder = class {
       field,
       op,
       this.renderValue(rule, column),
-      TEXT_MATCH2.has(rule.op) ? h("span", { class: "ig-qb-badge", title: t("gridSideNote"), text: "grid" }) : null,
       h("button", {
         type: "button",
         class: "ig-qb-remove",
@@ -3823,7 +4279,338 @@ var QueryBuilder = class {
   }
 };
 
+// src/ui/find-bar.ts
+var FindBar = class {
+  element;
+  grid;
+  mode = "find";
+  input;
+  replaceInput;
+  matchCase;
+  wholeCell;
+  count;
+  replaceRow;
+  findOnly;
+  matches = [];
+  current = -1;
+  timer;
+  constructor(grid) {
+    this.grid = grid;
+    const t = grid.t;
+    const option = (label) => {
+      const input = h("input", { type: "checkbox", onchange: () => this.search() });
+      return [input, h("label", { class: "ig-find-option" }, input, label)];
+    };
+    let caseLabel;
+    let wholeLabel;
+    [this.matchCase, caseLabel] = option(t("matchCase"));
+    [this.wholeCell, wholeLabel] = option(t("wholeCell"));
+    this.input = h("input", { type: "search", class: "ig-input ig-find-input", "aria-label": t("find"), oninput: () => this.schedule() });
+    this.replaceInput = h("input", { type: "text", class: "ig-input ig-find-input", placeholder: t("replaceWith"), "aria-label": t("replaceWith") });
+    this.count = h("span", { class: "ig-find-count", "aria-live": "polite" });
+    const button = (text, onclick, title) => h("button", { type: "button", class: "ig-btn", text, title: title ?? text, "aria-label": title ?? text, onclick });
+    const previous = button("\u2191", () => this.step(-1), t("findPrevious"));
+    const next = button("\u2193", () => this.step(1), t("findNext"));
+    this.replaceRow = h(
+      "div",
+      { class: "ig-find-row" },
+      this.replaceInput,
+      button(t("replace"), () => this.replaceCurrent()),
+      button(t("replaceAll"), () => this.replaceAll())
+    );
+    this.findOnly = [previous, next, caseLabel, wholeLabel, this.count];
+    this.element = h(
+      "div",
+      { class: "ig-find", role: "search", hidden: true },
+      h(
+        "div",
+        { class: "ig-find-row" },
+        this.input,
+        previous,
+        next,
+        caseLabel,
+        wholeLabel,
+        this.count,
+        h("button", { type: "button", class: "ig-btn ig-find-close", text: "\xD7", title: t("close"), "aria-label": t("close"), onclick: () => this.close() })
+      ),
+      this.replaceRow
+    );
+    this.element.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        this.close();
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        if (this.mode === "goto") this.goTo();
+        else if (e.target === this.replaceInput) this.replaceCurrent();
+        else this.step(e.shiftKey ? -1 : 1);
+      } else if ((e.ctrlKey || e.metaKey) && ["f", "h", "g"].includes(e.key.toLowerCase())) {
+        e.preventDefault();
+        this.open({ f: "find", h: "replace", g: "goto" }[e.key.toLowerCase()]);
+      }
+    });
+  }
+  get isOpen() {
+    return !this.element.hidden;
+  }
+  open(mode2 = "find") {
+    const t = this.grid.t;
+    const changed = mode2 !== this.mode;
+    this.mode = mode2;
+    this.element.hidden = false;
+    this.element.dataset.mode = mode2;
+    this.replaceRow.hidden = mode2 !== "replace";
+    for (const el of this.findOnly) el.hidden = mode2 === "goto";
+    this.input.type = mode2 === "goto" ? "text" : "search";
+    this.input.placeholder = mode2 === "goto" ? t("goToHint") : t("find");
+    this.input.setAttribute("aria-label", mode2 === "goto" ? t("goTo") : t("find"));
+    if (changed && (mode2 === "goto" || this.input.dataset.mode === "goto")) this.input.value = "";
+    this.input.dataset.mode = mode2;
+    this.input.focus();
+    this.input.select();
+    if (mode2 !== "goto") this.search();
+  }
+  close() {
+    if (this.element.hidden) return;
+    this.element.hidden = true;
+    this.matches = [];
+    this.current = -1;
+    this.grid.highlightCells([]);
+    this.grid.focus();
+  }
+  options() {
+    return { matchCase: this.matchCase.checked, wholeCell: this.wholeCell.checked };
+  }
+  schedule() {
+    clearTimeout(this.timer);
+    if (this.mode === "goto") return;
+    this.timer = setTimeout(() => this.search(), 120);
+  }
+  /** Finds every match and moves to the first one at or after the active cell. */
+  search() {
+    clearTimeout(this.timer);
+    const text = this.input.value;
+    this.matches = text ? this.grid.find(text, this.options()) : [];
+    this.grid.highlightCells(this.matches);
+    this.current = -1;
+    if (this.matches.length) this.step(0);
+    else this.updateCount();
+  }
+  step(delta) {
+    if (!this.matches.length) {
+      if (this.input.value) this.search();
+      return;
+    }
+    if (this.current === -1) {
+      const start = this.grid.indexOfCell(this.grid.getActiveCell());
+      const after = this.matches.findIndex((m) => this.grid.indexOfCell(m) >= start);
+      this.current = after === -1 ? 0 : after;
+      if (delta < 0) this.current = (this.current - 1 + this.matches.length) % this.matches.length;
+    } else {
+      this.current = (this.current + delta + this.matches.length) % this.matches.length;
+    }
+    this.select(this.current);
+  }
+  select(index) {
+    this.current = index;
+    const match = this.matches[index];
+    if (match) this.grid.setRange(match);
+    this.updateCount();
+  }
+  updateCount() {
+    const t = this.grid.t;
+    this.count.textContent = !this.input.value ? "" : this.matches.length ? t("findCount", { current: this.current + 1, count: this.matches.length }) : t("noMatches");
+    this.input.classList.toggle("ig-invalid", !!this.input.value && !this.matches.length);
+  }
+  replaceCurrent() {
+    const match = this.matches[this.current];
+    if (!match) {
+      this.search();
+      return;
+    }
+    this.grid.replace(this.input.value, this.replaceInput.value, { ...this.options(), cells: [match] });
+    const position = this.grid.indexOfCell(match);
+    this.matches = this.grid.find(this.input.value, this.options());
+    this.grid.highlightCells(this.matches);
+    const next = this.matches.findIndex((m) => this.grid.indexOfCell(m) > position);
+    this.select(this.matches.length ? next === -1 ? 0 : next : -1);
+  }
+  replaceAll() {
+    const replaced = this.grid.replace(this.input.value, this.replaceInput.value, this.options());
+    this.search();
+    this.count.textContent = this.grid.t("replacedCount", { count: replaced });
+  }
+  goTo() {
+    const ok = this.grid.goTo(this.input.value);
+    this.input.classList.toggle("ig-invalid", !ok);
+    if (ok) this.close();
+  }
+};
+
+// src/ui/virtual.ts
+var RowLayout = class {
+  defaultHeight;
+  keys = [];
+  heights = /* @__PURE__ */ new Map();
+  offsets = new Float64Array(1);
+  dirtyFrom = 0;
+  constructor(defaultHeight) {
+    this.defaultHeight = defaultHeight;
+  }
+  get count() {
+    return this.keys.length;
+  }
+  /** The rows, in display order. Measured heights of rows that stay are kept. */
+  setKeys(keys) {
+    this.keys = keys;
+    if (this.offsets.length < keys.length + 1) this.offsets = new Float64Array(Math.max(keys.length + 1, this.offsets.length * 2));
+    this.dirtyFrom = 0;
+  }
+  setDefaultHeight(height) {
+    if (height > 0 && height !== this.defaultHeight) {
+      this.defaultHeight = height;
+      this.dirtyFrom = 0;
+    }
+  }
+  heightOf(index) {
+    const key = this.keys[index];
+    return key === void 0 ? this.defaultHeight : this.heights.get(key) ?? this.defaultHeight;
+  }
+  /**
+   * Records a measured height.
+   * @return whether the layout changed
+   */
+  measure(index, height) {
+    const key = this.keys[index];
+    if (key === void 0 || Math.abs(this.heightOf(index) - height) < 0.5) return false;
+    if (Math.abs(height - this.defaultHeight) < 0.5) this.heights.delete(key);
+    else this.heights.set(key, height);
+    this.dirtyFrom = Math.min(this.dirtyFrom, index);
+    return true;
+  }
+  forget(key) {
+    this.heights.delete(key);
+    this.dirtyFrom = 0;
+  }
+  ensure() {
+    if (this.dirtyFrom > this.keys.length) return;
+    const offsets = this.offsets;
+    for (let i = this.dirtyFrom; i < this.keys.length; i++) offsets[i + 1] = offsets[i] + this.heightOf(i);
+    this.dirtyFrom = this.keys.length + 1;
+  }
+  /** Top of a row, in pixels. */
+  offsetOf(index) {
+    this.ensure();
+    return this.offsets[Math.max(0, Math.min(index, this.keys.length))];
+  }
+  get total() {
+    return this.offsetOf(this.keys.length);
+  }
+  /** Index of the row at a vertical position (binary search). */
+  indexAt(y) {
+    this.ensure();
+    let low = 0;
+    let high = this.keys.length - 1;
+    while (low < high) {
+      const mid = low + high + 1 >> 1;
+      if (this.offsets[mid] <= y) low = mid;
+      else high = mid - 1;
+    }
+    return Math.max(0, low);
+  }
+  /**
+   * Rows to render for a viewport, with extra rows above and below for smooth scrolling.
+   * @return [start, end) indexes
+   */
+  window(scrollTop, viewportHeight, overscan) {
+    if (!this.keys.length) return [0, 0];
+    const start = Math.max(0, this.indexAt(scrollTop) - overscan);
+    const last = this.indexAt(scrollTop + Math.max(viewportHeight, 1));
+    const end = Math.min(this.keys.length, last + 1 + overscan);
+    return [start, end];
+  }
+};
+function columnWindow(widths, scrollLeft, viewportWidth, overscan) {
+  if (!widths.length) return { start: 0, end: 0, before: 0, after: 0 };
+  let x = 0;
+  let first = widths.length - 1;
+  for (let i = 0; i < widths.length; i++) {
+    if (x + widths[i] > scrollLeft) {
+      first = i;
+      break;
+    }
+    x += widths[i];
+  }
+  let last = first;
+  let right = x;
+  for (let i = first; i < widths.length; i++) {
+    right += widths[i];
+    last = i;
+    if (right >= scrollLeft + viewportWidth) break;
+  }
+  const start = Math.max(0, first - overscan);
+  const end = Math.min(widths.length, last + 1 + overscan);
+  let before = 0;
+  for (let i = 0; i < start; i++) before += widths[i];
+  let after = 0;
+  for (let i = end; i < widths.length; i++) after += widths[i];
+  return { start, end, before, after };
+}
+
+// src/ui/sparkline.ts
+var SVG = "http://www.w3.org/2000/svg";
+function svg(tag, attributes) {
+  const element = document.createElementNS(SVG, tag);
+  for (const [name, value] of Object.entries(attributes)) element.setAttribute(name, String(value));
+  return element;
+}
+function sparklineValues(value) {
+  const list = Array.isArray(value) ? value : typeof value === "string" ? value.split(/[,;\s]+/) : [];
+  return list.map(Number).filter(Number.isFinite);
+}
+function sparkline(values, { type = "line", color, negativeColor, width = 100, height = 22, min, max } = {}) {
+  const chart = svg("svg", { class: `ig-sparkline ig-sparkline-${type}`, width, height, viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": values.join(", ") });
+  if (!values.length) return chart;
+  const pad2 = 2;
+  const inner = height - pad2 * 2;
+  const stroke = color ?? "currentColor";
+  if (type === "line") {
+    const low2 = min ?? Math.min(...values);
+    const high2 = max ?? Math.max(...values);
+    const span2 = high2 - low2 || 1;
+    const step = values.length > 1 ? (width - pad2 * 2) / (values.length - 1) : 0;
+    const points = values.map((v, i) => [pad2 + i * step, pad2 + inner - (v - low2) / span2 * inner]);
+    chart.append(svg("polyline", { points: points.map((p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" "), fill: "none", stroke, "stroke-width": 1.5, "stroke-linejoin": "round", "stroke-linecap": "round" }));
+    const last = points.at(-1);
+    chart.append(svg("circle", { cx: last[0].toFixed(1), cy: last[1].toFixed(1), r: 2, fill: stroke }));
+    return chart;
+  }
+  const winLoss = type === "winloss";
+  const low = winLoss ? -1 : Math.min(0, min ?? Math.min(...values));
+  const high = winLoss ? 1 : Math.max(0, max ?? Math.max(...values));
+  const span = high - low || 1;
+  const zero = pad2 + inner - (0 - low) / span * inner;
+  const slot = (width - pad2 * 2) / values.length;
+  values.forEach((raw, i) => {
+    const v = winLoss ? Math.sign(raw) : raw;
+    if (winLoss && v === 0) return;
+    const y = pad2 + inner - (v - low) / span * inner;
+    chart.append(svg("rect", {
+      x: (pad2 + i * slot + slot * 0.15).toFixed(1),
+      y: Math.min(y, zero).toFixed(1),
+      width: Math.max(1, slot * 0.7).toFixed(1),
+      height: Math.max(1, Math.abs(zero - y)).toFixed(1),
+      fill: v < 0 ? negativeColor ?? "var(--ig-negative)" : stroke
+    }));
+  });
+  return chart;
+}
+
 // src/ui/grid.ts
+var DEFAULT_COLUMN_WIDTH = 120;
+var SELECTION_WIDTH = 40;
+var widthOf = (column) => column.width ?? DEFAULT_COLUMN_WIDTH;
 var isRow = (row) => row !== null;
 var targetOf = (event) => event.target instanceof Element ? event.target : null;
 var FOOTER_SHORTCUTS = { sum: "SUM", avg: "AVERAGE", average: "AVERAGE", count: "COUNT", counta: "COUNTA", min: "MIN", max: "MAX", median: "MEDIAN" };
@@ -3842,11 +4629,19 @@ var DEFAULTS = {
   initialSort: [],
   initialFilters: {},
   initialQuery: null,
-  selection: { mode: "multiple", checkbox: true },
-  navbar: { search: true, filters: true, columns: true, export: ["csv", "xlsx"], add: false, delete: false, changes: true, query: true, items: [] },
+  selection: { mode: "multiple", checkbox: true, selectOnClick: false },
+  navbar: { search: true, filters: true, columns: true, export: ["csv", "xlsx"], add: false, delete: false, changes: true, query: true, undo: true, items: [] },
   changeTracking: { inputName: "changes", historyLimit: 5e3 },
   statusBar: true,
+  find: true,
+  groupBy: [],
+  groupsCollapsed: false,
+  comments: [],
   renderChunk: 100,
+  rowHeight: null,
+  undoLimit: 100,
+  overscan: 8,
+  virtualColumns: 40,
   append: null,
   rowClass: null,
   rowFormats: [],
@@ -3854,6 +4649,27 @@ var DEFAULTS = {
   confirmDelete: true,
   on: {}
 };
+function readBlob(blob) {
+  if (typeof blob.arrayBuffer === "function") return blob.arrayBuffer();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsArrayBuffer(blob);
+  });
+}
+function inferType(values) {
+  const present = values.filter((v) => v !== null && v !== void 0 && v !== "");
+  if (!present.length) return "text";
+  if (present.every((v) => typeof v === "number" || typeof v === "string" && /^-?\d+(\.\d+)?$/.test(v.trim()))) {
+    return present.every((v) => Number.isInteger(Number(v))) ? "integer" : "number";
+  }
+  if (present.every((v) => typeof v === "boolean")) return "boolean";
+  if (present.every((v) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?)?$/.test(v))) {
+    return present.some((v) => v.includes("T")) ? "datetime" : "date";
+  }
+  return "text";
+}
 var IntelligentGrid = class {
   element;
   options;
@@ -3870,13 +4686,48 @@ var IntelligentGrid = class {
   _filters;
   _queryModel = null;
   _queryBuilder = null;
+  _findBar = null;
+  // cells marked by find ("id\u0000field")
+  _highlighted = /* @__PURE__ */ new Set();
   _search = "";
   _selected = /* @__PURE__ */ new Set();
   _anchorId = null;
   _active = null;
+  // the other corner of the selected range; the active cell is the anchor (like Excel)
+  _focus = null;
+  _dragging = false;
+  // fill handle drag: the source block and how far it is being extended
+  _filling = null;
+  _pointer = null;
+  _autoScroll = 0;
   _editing = null;
   _view = [];
-  _rendered = 0;
+  // grouping: the view is sorted by the group fields and shown as group rows plus the rows of open groups
+  _groupBy = [];
+  _collapsed = /* @__PURE__ */ new Set();
+  _collapseNew = false;
+  _display = null;
+  _displayIndex = /* @__PURE__ */ new Map();
+  _groupOf = /* @__PURE__ */ new Map();
+  _groupEls = /* @__PURE__ */ new Map();
+  _knownGroups = /* @__PURE__ */ new Set();
+  // min / max of columns with data bars, color scales or icon sets, over the view
+  _stats = /* @__PURE__ */ new Map();
+  // short message in the status bar (after an import)
+  _notice = null;
+  // cell comments: row id → field → text
+  _comments = /* @__PURE__ */ new Map();
+  _commentTip = null;
+  _noticeTimer;
+  _layout = new RowLayout(34);
+  _viewIndex = /* @__PURE__ */ new Map();
+  _rowWindow = [0, 0];
+  _rowEls = /* @__PURE__ */ new Map();
+  _plan = null;
+  _topSpacer;
+  _bottomSpacer;
+  _scrollFrame = 0;
+  _calibrated = false;
   _invalid = /* @__PURE__ */ new Map();
   _append;
   _navbar;
@@ -3887,16 +4738,16 @@ var IntelligentGrid = class {
   _table;
   _message;
   _loading;
-  _sentinel;
   _scroller;
   _status;
   _searchInput = null;
   _selectAllBox = null;
   _popover = null;
-  _observer = null;
   _onScroll = null;
   _onDocumentPointer = null;
   _tracker = null;
+  _undo = new UndoStack(100);
+  _replaying = false;
   _formInputs = [];
   /**
    * @param string|HTMLElement target
@@ -3924,7 +4775,11 @@ var IntelligentGrid = class {
     this.calc = new CalcEngine({ store: this.store, locale: this.locale, names: this.options.names, functions: this.functions });
     const tracking = this.options.changeTracking;
     if (tracking) this._tracker = new ChangeTracker(tracking.historyLimit);
+    this._undo.limit = this.options.undoLimit;
     this._sort = [...this.options.initialSort];
+    this._groupBy = [...this.options.groupBy];
+    for (const comment of this.options.comments) this._writeComment(String(comment.id), comment.field, comment.text);
+    this._collapseNew = this.options.groupsCollapsed;
     this._filters = { ...this.options.initialFilters };
     this._queryModel = normalizeQuery(this.options.initialQuery);
     this._append = this.options.append ? { pageSize: 100, serverSide: true, threshold: 200, ...this.options.append, loaded: 0, hasMore: true, loading: false, request: 0 } : null;
@@ -3965,8 +4820,24 @@ var IntelligentGrid = class {
   getColumn(field) {
     return this._columnMap.get(field);
   }
+  /** Visible columns in display order: pinned left, scrollable, pinned right. */
   get visibleColumns() {
-    return this.columns.filter((c) => c.visible);
+    const visible = this.columns.filter((c) => c.visible);
+    return [...visible.filter((c) => c.pinned === "left"), ...visible.filter((c) => c.pinned !== "left" && c.pinned !== "right"), ...visible.filter((c) => c.pinned === "right")];
+  }
+  /**
+   * Freezes a column on the left or right edge while scrolling horizontally (Excel's freeze panes).
+   * @param side 'left' | 'right' | null to unfreeze
+   */
+  pinColumn(field, side) {
+    const column = this.getColumn(field);
+    if (!column) throw new Error(`Unknown column ${field}`);
+    column.pinned = side;
+    this._plan = null;
+    this._renderHeader();
+    this._renderWindow(true);
+    this._renderFooter();
+    this.emit("columnPin", { field, side });
   }
   setColumns(definitions) {
     this._setColumns(definitions);
@@ -4029,6 +4900,7 @@ var IntelligentGrid = class {
     this.calc.setColumns(this.columns);
     this._selected.clear();
     this._tracker?.reset();
+    this._undo.clear();
     this._insert(rows);
     this.refresh();
     this._afterTrackedChange();
@@ -4046,6 +4918,9 @@ var IntelligentGrid = class {
     return this._publicRow(this.store.get(id));
   }
   addRow(row = {}, { position = "end" } = {}) {
+    return this.batch(() => this._addRow(row, { position }), "insert");
+  }
+  _addRow(row = {}, { position = "end" } = {}) {
     const event = this.emit("beforeRowAdd", { row: { ...row } });
     if (event.defaultPrevented) return null;
     const id = this._insert([event.detail.row])[0];
@@ -4053,18 +4928,46 @@ var IntelligentGrid = class {
     const data = { ...this.store.get(id) };
     if (position === "start") this._view.unshift(data);
     else this._view.push(data);
+    if (!this._replaying) this._undo.record({ kind: "insert", id, data: { ...data }, index: position === "start" ? 0 : this._view.length - 1 });
     this._renderBody();
     this._renderFooter();
     this._afterTrackedChange();
     this.emit("rowAdd", { id, row: this.getRow(id) });
     return id;
   }
+  /**
+   * Adds many rows at the end with one render and one undo step (no beforeRowAdd per row).
+   * @return the new ids
+   */
+  addRows(rows) {
+    if (!rows.length) return [];
+    return this.batch(() => {
+      const ids = this._insert(rows);
+      for (const id of ids) {
+        this._tracker?.recordInsert(id);
+        const data = { ...this.store.get(id) };
+        this._view.push(data);
+        if (!this._replaying) this._undo.record({ kind: "insert", id, data: { ...data }, index: this._view.length - 1 });
+      }
+      this._renderBody();
+      this._renderFooter();
+      this._renderNavbar();
+      this._afterTrackedChange();
+      this.emit("rowsAdd", { ids });
+      return ids;
+    }, "insert");
+  }
   updateRow(id, patch) {
+    return this.batch(() => this._updateRow(id, patch), "update");
+  }
+  _updateRow(id, patch) {
     if (!this.store.has(id)) return false;
     this._touch(id);
     const before = this.getRow(id);
+    const states = Object.keys(patch).filter((field) => field !== "_id").map((field) => [field, this._cellState(id, field)]);
     const previous = this.store.update(id, patch);
     const scope = this.calc.recalculate([id], Object.keys(patch));
+    for (const [field, state] of states) this._recordCell(id, field, state);
     const after = this.getRow(id);
     for (const field of Object.keys(patch)) {
       if (field !== "_id") this._tracker?.recordUpdate(id, field, before[field] ?? null, after[field] ?? null, "api");
@@ -4075,11 +4978,19 @@ var IntelligentGrid = class {
     return true;
   }
   deleteRows(ids) {
+    return this.batch(() => this._deleteRows(ids), "delete");
+  }
+  _deleteRows(ids) {
     const event = this.emit("beforeRowDelete", { ids: [...ids], rows: ids.map((id) => this.getRow(id)) });
     if (event.defaultPrevented) return [];
     for (const id of event.detail.ids) {
       const data = this.store.get(id);
-      if (data) this._tracker?.recordDelete(id, data, this.calc.cellFormulas.get(id));
+      if (!data) continue;
+      const formulas = this.calc.cellFormulas.get(id);
+      const wasInserted = this._tracker?.recordDelete(id, data, formulas) ?? false;
+      if (!this._replaying) {
+        this._undo.record({ kind: "delete", id, data: { ...data }, formulas: formulas ? { ...formulas } : void 0, index: this._viewIndex.get(id) ?? this._view.length, wasInserted });
+      }
     }
     const removed = this.store.remove(event.detail.ids);
     const removedIds = removed.map((r) => r._id);
@@ -4088,7 +4999,7 @@ var IntelligentGrid = class {
     removedIds.forEach((id) => this._selected.delete(id));
     const gone = new Set(removedIds);
     this._view = this._view.filter((r) => !gone.has(r._id));
-    this._rendered = Math.min(this._rendered, this._view.length);
+    this._renderBody();
     this._syncRows(null);
     if (removedIds.length) this.emit("selectionChange", this._selectionDetail());
     this._afterTrackedChange();
@@ -4100,11 +5011,14 @@ var IntelligentGrid = class {
    * @return object {ok, error?}
    */
   setCellValue(id, field, value, { source = "api" } = {}) {
+    return this.batch(() => this._setCellValue(id, field, value, { source }), "edit");
+  }
+  _setCellValue(id, field, value, { source = "api" } = {}) {
     const column = this.getColumn(field);
     const data = this.store.get(id);
     if (!column || !data) return { ok: false, error: "notFound" };
     if (isFormula(value) && column.allowFormulas) return this.setCellFormula(id, field, value, { source });
-    if (typeof value === "string" && source !== "api") {
+    if (typeof value === "string" && source !== "api" && source !== "fill") {
       const parsed = parseInput(value, column, this.locale);
       if (parsed.error) return this._invalidCell(id, field, value, parsed.error);
       value = parsed.value;
@@ -4122,6 +5036,7 @@ var IntelligentGrid = class {
     const event = this.emit("beforeCellChange", detail);
     if (event.defaultPrevented) return { ok: false, error: "cancelled" };
     this._touch(id);
+    const beforeState = this._cellState(id, field);
     const hadFormula = !!this.calc.cellFormulas.get(id)?.[field];
     if (this.calc.columnFormulas.has(field)) this.calc.setCellOverride(id, field);
     else if (hadFormula) this.calc.setCellFormula(id, field, null);
@@ -4129,6 +5044,7 @@ var IntelligentGrid = class {
     this._invalid.delete(`${id}\0${field}`);
     const scope = this.calc.recalculate([id], [field]);
     this._syncRows(scope === "all" || hadFormula ? null : [id]);
+    this._recordCell(id, field, beforeState);
     const updated = this.getRow(id);
     this._tracker?.recordUpdate(id, field, oldValue ?? null, updated[field] ?? null, source);
     this._afterTrackedChange();
@@ -4138,14 +5054,19 @@ var IntelligentGrid = class {
     return { ok: true };
   }
   setCellFormula(id, field, formula, { source = "api" } = {}) {
+    return this.batch(() => this._setCellFormula(id, field, formula, { source }), "formula");
+  }
+  _setCellFormula(id, field, formula, { source = "api" } = {}) {
     const column = this.getColumn(field);
     if (!column || !this.store.has(id)) return { ok: false, error: "notFound" };
     const oldValue = this.getRow(id)[field];
     const event = this.emit("beforeCellChange", { id, field, value: formula, oldValue, row: this.getRow(id), column, source, formula: true });
     if (event.defaultPrevented) return { ok: false, error: "cancelled" };
     this._touch(id);
+    const beforeState = this._cellState(id, field);
     this.calc.setCellFormula(id, field, formula);
     this.calc.recalculate([id], [field]);
+    this._recordCell(id, field, beforeState);
     this._syncRows(null);
     const value = this.getRow(id)[field];
     if (isErrorCode(value)) this.emit("formulaError", { id, field, formula, error: value });
@@ -4173,6 +5094,127 @@ var IntelligentGrid = class {
     const row = id === null ? null : this.store.get(id);
     const value = this.calc.evaluate(formula, row, row ? null : this._view);
     return isError(value) ? value.code : value;
+  }
+  /* ---------------------------------------------------------------- undo / redo */
+  /**
+   * Groups every change made inside fn into one undo step: grid.batch(() => { ... }, 'import').
+   * @return what fn returns
+   */
+  batch(fn, label = "batch") {
+    this._undo.begin(label);
+    try {
+      return fn();
+    } finally {
+      this._undo.end();
+      this._renderNavbar();
+    }
+  }
+  canUndo() {
+    return this._undo.canUndo;
+  }
+  canRedo() {
+    return this._undo.canRedo;
+  }
+  /** Undoes the last step (Ctrl+Z). @return whether something was undone */
+  undo() {
+    this._closeEditor(false);
+    const step = this._undo.takeUndo();
+    if (!step) return false;
+    this._applyStep(step, "undo");
+    return true;
+  }
+  /** Redoes the last undone step (Ctrl+Y). @return whether something was redone */
+  redo() {
+    this._closeEditor(false);
+    const step = this._undo.takeRedo();
+    if (!step) return false;
+    this._applyStep(step, "redo");
+    return true;
+  }
+  clearUndo() {
+    this._undo.clear();
+    this._renderNavbar();
+  }
+  _cellState(id, field) {
+    return { value: this.store.get(id)?.[field], formula: this.calc.cellFormulas.get(id)?.[field] };
+  }
+  _recordCell(id, field, before) {
+    if (this._replaying) return;
+    const after = this._cellState(id, field);
+    if (before.value === after.value && before.formula === after.formula) return;
+    this._undo.record({ kind: "cell", id, field, before, after });
+  }
+  _writeCell(id, field, state, source) {
+    if (!this.store.has(id)) return;
+    this._touch(id);
+    const from = this.getRow(id)[field];
+    if (state.formula === void 0) {
+      if (this.calc.cellFormulas.get(id)?.[field] !== void 0) this.calc.setCellFormula(id, field, null);
+    } else {
+      this.calc.setCellFormula(id, field, state.formula);
+    }
+    this.store.update(id, { [field]: state.value });
+    this._invalid.delete(`${id}\0${field}`);
+    this._tracker?.recordUpdate(id, field, from ?? null, this.getRow(id)[field] ?? null, source);
+  }
+  _removeRow(change, source) {
+    const data = this.store.get(change.id);
+    if (!data) return;
+    this._tracker?.recordDelete(change.id, data, this.calc.cellFormulas.get(change.id), source);
+    this.store.remove([change.id]);
+    this.calc.cellFormulas.delete(change.id);
+    this._selected.delete(change.id);
+    this._view = this._view.filter((row) => row._id !== change.id);
+  }
+  _restoreRow(change, source) {
+    if (this.store.has(change.id)) return;
+    this.store.insert([{ ...change.data }]);
+    if (change.formulas) this.calc.cellFormulas.set(change.id, { ...change.formulas });
+    if (change.kind === "delete") this._tracker?.restoreDeleted(change.id, change.wasInserted, source);
+    else this._tracker?.recordInsert(change.id, source);
+    this._view.splice(Math.min(change.index, this._view.length), 0, { ...this.store.get(change.id) });
+  }
+  _applyStep(step, direction) {
+    this._replaying = true;
+    const ids = /* @__PURE__ */ new Set();
+    const fields = /* @__PURE__ */ new Set();
+    let structural = false;
+    try {
+      const changes = direction === "undo" ? [...step.changes].reverse() : step.changes;
+      const restores = changes.filter((c) => (c.kind === "insert" || c.kind === "delete") && direction === "undo" === (c.kind === "delete"));
+      restores.sort((a, b) => a.index - b.index);
+      for (const change of changes) {
+        if (change.kind === "cell") {
+          this._writeCell(change.id, change.field, direction === "undo" ? change.before : change.after, direction);
+          ids.add(change.id);
+          fields.add(change.field);
+        } else if (change.kind === "comment") {
+          this._writeComment(change.id, change.field, direction === "undo" ? change.before : change.after);
+          ids.add(change.id);
+        } else if (!restores.includes(change)) {
+          this._removeRow(change, direction);
+          structural = true;
+        }
+      }
+      for (const change of restores) {
+        this._restoreRow(change, direction);
+        structural = true;
+      }
+    } finally {
+      this._replaying = false;
+    }
+    if (structural) {
+      this.calc.setColumns(this.columns);
+      this.calc.recalculateAll();
+      this._renderBody();
+      this._syncRows(null);
+    } else {
+      const scope = this.calc.recalculate([...ids], [...fields]);
+      this._syncRows(scope === "all" ? null : [...ids]);
+    }
+    this._afterTrackedChange();
+    this._renderNavbar();
+    this.emit(direction, { label: step.label, changes: step.changes.length });
   }
   /* ---------------------------------------------------------------- dialogs */
   /**
@@ -4441,7 +5483,6 @@ var IntelligentGrid = class {
   refresh() {
     this._closeEditor(false);
     this._view = this._query();
-    this._rendered = 0;
     this._renderBody();
     this._renderFooter();
     this._renderNavbar();
@@ -4457,11 +5498,12 @@ var IntelligentGrid = class {
     append.loading = false;
     if (this.hasChanges()) this.emit("changesDiscarded", { changes: this.getChanges() });
     this._tracker?.reset();
+    this._undo.clear();
     this.store.clear();
     this.calc.cellFormulas.clear();
     this.calc.setColumns(this.columns);
     this._view = [];
-    this._rendered = 0;
+    this._scroller.scrollTop = 0;
     this._renderBody();
   }
   /**
@@ -4502,13 +5544,8 @@ var IntelligentGrid = class {
         if (scopeAll) this._view.forEach((row, i) => {
           this._view[i] = { ...this.store.get(row._id) };
         });
-        this._view.push(...ids.map((id) => ({ ...this.store.get(id) })));
-        if (scopeAll) {
-          this._rendered = 0;
-          this._renderBody();
-        } else {
-          this._renderMore();
-        }
+        for (const id of ids) this._view.push({ ...this.store.get(id) });
+        this._renderBody();
         this._renderFooter();
         this._renderNavbar();
       }
@@ -4537,8 +5574,7 @@ var IntelligentGrid = class {
     const scroller = this._scroller;
     if (!scroller) return;
     if (scroller.scrollTop + scroller.clientHeight < scroller.scrollHeight - (this._append?.threshold ?? 200)) return;
-    if (this._rendered < this._view.length) this._renderMore();
-    else if (this._append?.hasMore) this.loadMore();
+    if (this._append?.hasMore) this.loadMore();
     else this.emit("scrollEnd", {});
   }
   /* ---------------------------------------------------------------- selection */
@@ -4576,7 +5612,7 @@ var IntelligentGrid = class {
     return { ids: this.getSelectedIds(), rows: this.getSelected() };
   }
   _afterSelection() {
-    for (const tr of this._tbody.rows) {
+    for (const tr of this._rowEls.values()) {
       const selected = this._selected.has(tr.dataset.id ?? "");
       tr.classList.toggle("ig-selected", selected);
       tr.setAttribute("aria-selected", String(selected));
@@ -4713,15 +5749,19 @@ var IntelligentGrid = class {
     );
     this._message = h("div", { class: "ig-message", hidden: true });
     this._loading = h("div", { class: "ig-loading", hidden: true, text: this.t("loading") });
-    this._sentinel = h("div", { class: "ig-sentinel" });
+    this._topSpacer = h("tr", { class: "ig-spacer", "aria-hidden": "true" });
+    this._bottomSpacer = h("tr", { class: "ig-spacer", "aria-hidden": "true" });
     this._scroller = h(
       "div",
       { class: "ig-scroll", tabindex: "0", style: { maxHeight: typeof this.options.height === "number" ? `${this.options.height}px` : this.options.height } },
       this._table,
       this._message,
-      this._loading,
-      this._sentinel
+      this._loading
     );
+    if (this.options.rowHeight) {
+      this._layout.setDefaultHeight(this.options.rowHeight);
+      this._calibrated = true;
+    }
     this._status = h("div", { class: "ig-status", "aria-live": "polite" });
     if (this.options.navbar) this.root.append(this._navbar);
     if (this.options.navbar && this.options.navbar.query) {
@@ -4729,29 +5769,74 @@ var IntelligentGrid = class {
       this.root.append(this._queryBuilder.element);
       this.on("queryBuilderClose", () => this._renderNavbar());
     }
+    if (this.options.find) {
+      this._findBar = new FindBar(this);
+      this.root.append(this._findBar.element);
+    }
     this.root.append(this._scroller);
     if (this.options.statusBar) this.root.append(this._status);
+    this.element.classList.add("ig-host");
     this.element.append(this.root);
     this._renderHeader();
     this._bindEvents();
   }
   _bindEvents() {
     const scroller = this._scroller;
-    this._onScroll = () => this._checkScrollEnd();
+    this._onScroll = () => {
+      if (this._scrollFrame) return;
+      this._scrollFrame = requestAnimationFrame(() => {
+        this._scrollFrame = 0;
+        this._renderWindow();
+        this._checkScrollEnd();
+      });
+    };
     scroller.addEventListener("scroll", this._onScroll, { passive: true });
-    if (typeof IntersectionObserver !== "undefined") {
-      this._observer = new IntersectionObserver((entries) => {
-        if (entries.some((e) => e.isIntersecting)) this._checkScrollEnd();
-      }, { root: scroller, rootMargin: "200px" });
-      this._observer.observe(this._sentinel);
-    }
+    this._tbody.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      if (targetOf(e)?.closest(".ig-fill-handle")) {
+        e.preventDefault();
+        this._startDrag(e, true);
+        return;
+      }
+      const td = targetOf(e)?.closest("td[data-field]");
+      const tr = td?.closest("tr");
+      if (!td || !tr?.dataset.id || this._editing?.td === td || targetOf(e)?.closest("input, select, textarea, button, .ig-fill-handle")) return;
+      e.preventDefault();
+      this._scroller.focus({ preventScroll: true });
+      this._selectCell(tr.dataset.id, td.dataset.field, e.shiftKey && !!this._active);
+      this._startDrag(e, false);
+    });
+    this._tbody.addEventListener("mouseover", (e) => {
+      const td = targetOf(e)?.closest("td.ig-has-comment");
+      if (td) this._showCommentTip(td);
+    });
+    this._tbody.addEventListener("mouseout", (e) => {
+      const td = targetOf(e)?.closest("td.ig-has-comment");
+      if (td && !td.contains(e.relatedTarget)) this._hideCommentTip();
+    });
+    this._tbody.addEventListener("pointerover", (e) => {
+      if (!this._dragging) return;
+      const td = targetOf(e)?.closest("td[data-field]");
+      if (td) this._dragOver(td);
+    });
+    this._tbody.addEventListener("dblclick", (e) => {
+      if (!targetOf(e)?.closest(".ig-fill-handle")) return;
+      e.preventDefault();
+      const bounds = this._rangeBounds();
+      if (bounds) this.fill("down", this._view.length - 1 - bounds.r2);
+    });
     this._tbody.addEventListener("click", (e) => {
+      const group = targetOf(e)?.closest("tr.ig-group-row")?.dataset.group;
+      if (group !== void 0) {
+        this.toggleGroup(group);
+        return;
+      }
       const td = targetOf(e)?.closest("td") ?? null;
       const tr = targetOf(e)?.closest("tr");
       if (!tr || !tr.dataset.id || this._editing?.td === td) return;
       const id = tr.dataset.id;
-      if (td?.dataset.field) this._setActive(id, td.dataset.field);
-      if (td?.classList.contains("ig-select-cell") || this.options.selection.selectOnClick !== false) this._clickSelect(id, e);
+      if (td?.dataset.field && !this._active) this._setActive(id, td.dataset.field);
+      if (td?.classList.contains("ig-select-cell") || this.options.selection.selectOnClick === true) this._clickSelect(id, e);
       const row = this.getRow(id);
       this.emit("rowClick", { id, row, event: e });
       if (td?.dataset.field) this.emit("cellClick", { id, field: td.dataset.field, value: row?.[td.dataset.field], row, event: e });
@@ -4781,21 +5866,92 @@ var IntelligentGrid = class {
     };
     document.addEventListener("pointerdown", this._onDocumentPointer);
   }
+  /**
+   * Which columns to render: pinned ones always, scrollable ones windowed when there are more than
+   * `virtualColumns` of them.
+   */
+  _columnPlan() {
+    const columns = this.visibleColumns;
+    const left = columns.filter((c) => c.pinned === "left");
+    const right = columns.filter((c) => c.pinned === "right");
+    const scrollable = columns.filter((c) => c.pinned !== "left" && c.pinned !== "right");
+    const selection = this.selectionMode !== "none" && !!this.options.selection.checkbox;
+    let center = scrollable;
+    let before = 0;
+    let after = 0;
+    if (scrollable.length > this.options.virtualColumns) {
+      const pinnedLeft = (selection ? SELECTION_WIDTH : 0) + left.reduce((sum2, c) => sum2 + widthOf(c), 0);
+      const pinnedRight = right.reduce((sum2, c) => sum2 + widthOf(c), 0);
+      const width = this._scroller?.clientWidth || 1200;
+      const range = columnWindow(scrollable.map(widthOf), Math.max(0, this._scroller?.scrollLeft ?? 0), Math.max(200, width - pinnedLeft - pinnedRight), 2);
+      center = scrollable.slice(range.start, range.end);
+      before = range.before;
+      after = range.after;
+    }
+    const sticky = /* @__PURE__ */ new Map();
+    let offset = selection && left.length ? SELECTION_WIDTH : 0;
+    left.forEach((column, i) => {
+      sticky.set(column.field, { side: "left", offset, edge: i === left.length - 1 });
+      offset += widthOf(column);
+    });
+    offset = 0;
+    [...right].reverse().forEach((column, i) => {
+      sticky.set(column.field, { side: "right", offset, edge: i === right.length - 1 });
+      offset += widthOf(column);
+    });
+    const key = [selection, ...left.map((c) => c.field), "|", before, ...center.map((c) => c.field), after, "|", ...right.map((c) => c.field)].join(",");
+    return { left, center, right, before, after, selection, sticky, key };
+  }
+  /** Cells of a row in plan order; spacers keep the width of the columns that are not rendered. */
+  _planCells(plan, cell, spacer, selectionCell) {
+    const cells = [];
+    if (plan.selection) {
+      const select = selectionCell();
+      if (plan.left.length) select.classList.add("ig-pinned", "ig-pinned-left");
+      cells.push(select);
+    }
+    const place = (column) => {
+      const element = cell(column);
+      const pin = plan.sticky.get(column.field);
+      if (pin) {
+        element.classList.add("ig-pinned", `ig-pinned-${pin.side}`);
+        if (pin.edge) element.classList.add(`ig-pinned-${pin.side}-edge`);
+        element.style[pin.side] = `${pin.offset}px`;
+      }
+      return element;
+    };
+    cells.push(...plan.left.map(place));
+    if (plan.before) cells.push(spacer());
+    cells.push(...plan.center.map(place));
+    if (plan.after) cells.push(spacer());
+    cells.push(...plan.right.map(place));
+    return cells;
+  }
   _renderHeader() {
+    const plan = this._plan = this._columnPlan();
     clear(this._colgroup);
     clear(this._thead);
-    const tr = h("tr");
+    const tr = h("tr", { "aria-rowindex": "1" });
     const multi = this._sort.length > 1;
-    if (this.selectionMode !== "none" && this.options.selection.checkbox) {
-      this._colgroup.append(h("col", { class: "ig-select-col" }));
-      this._selectAllBox = this.selectionMode === "multiple" ? h("input", { type: "checkbox", "aria-label": this.t("selectAll"), onchange: (e) => e.target.checked ? this.selectAll() : this.clearSelection() }) : null;
-      tr.append(h("th", { class: "ig-select-cell" }, this._selectAllBox));
-    } else {
-      this._selectAllBox = null;
-    }
-    for (const column of this.visibleColumns) {
-      const col = h("col", { style: { width: column.width ? `${column.width}px` : null, minWidth: `${column.minWidth}px` } });
-      this._colgroup.append(col);
+    const pinnedWidths = plan.left.length || plan.right.length || plan.before || plan.after;
+    const col = (column, width) => h("col", {
+      class: column ? null : "ig-col-spacer",
+      style: column ? { width: column.width || pinnedWidths ? `${widthOf(column)}px` : null, minWidth: `${column.minWidth}px` } : { width: `${width}px` }
+    });
+    if (plan.selection) this._colgroup.append(h("col", { class: "ig-select-col" }));
+    for (const column of plan.left) this._colgroup.append(col(column));
+    if (plan.before) this._colgroup.append(col(null, plan.before));
+    for (const column of plan.center) this._colgroup.append(col(column));
+    if (plan.after) this._colgroup.append(col(null, plan.after));
+    for (const column of plan.right) this._colgroup.append(col(column));
+    const cols = [...this._colgroup.children];
+    const colFor = (field) => {
+      const index = [...plan.selection ? [null] : [], ...plan.left, ...plan.before ? [null] : [], ...plan.center, ...plan.after ? [null] : [], ...plan.right].findIndex((column) => column?.field === field);
+      return cols[index];
+    };
+    this._selectAllBox = plan.selection && this.selectionMode === "multiple" ? h("input", { type: "checkbox", "aria-label": this.t("selectAll"), onchange: (e) => e.target.checked ? this.selectAll() : this.clearSelection() }) : null;
+    const headerCell = (column) => {
+      const col2 = colFor(column.field);
       const sortIndex = this._sort.findIndex((s) => s.field === column.field);
       const sort = this._sort[sortIndex];
       const filtered = isFilterActive(this._filters[column.field]);
@@ -4824,16 +5980,18 @@ var IntelligentGrid = class {
             }
           }) : null
         ),
-        column.resizable ? h("span", { class: "ig-resize", onpointerdown: (e) => this._startResize(e, column, col) }) : null
+        column.resizable ? h("span", { class: "ig-resize", onpointerdown: (e) => this._startResize(e, column, col2) }) : null
       );
       th.addEventListener("click", (e) => {
         if (targetOf(e)?.closest(".ig-filter-btn, .ig-resize")) return;
         const additive = this.options.sort.mode === "toggle" || e.shiftKey || e.ctrlKey || e.metaKey;
         this.toggleSort(column.field, additive);
       });
-      tr.append(th);
-    }
+      return th;
+    };
+    tr.append(...this._planCells(plan, headerCell, () => h("th", { class: "ig-spacer-cell", "aria-hidden": "true" }), () => h("th", { class: "ig-select-cell" }, this._selectAllBox)));
     this._thead.append(tr);
+    this._syncSelectAll();
   }
   _startResize(event, column, col) {
     event.preventDefault();
@@ -4849,54 +6007,198 @@ var IntelligentGrid = class {
     const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      this._plan = null;
+      this._renderWindow(true);
       this.emit("columnResize", { field: column.field, width: column.width });
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
   }
+  /** The rows to show changed (query, inserts, deletes): rebuild the layout and render the window. */
   _renderBody() {
-    clear(this._tbody);
-    const target = Math.max(this._rendered, Math.min(this.options.renderChunk, this._view.length));
-    this._rendered = 0;
-    this._renderRows(target);
+    if (this._groupBy.length) this._sortGroups();
+    this._stats.clear();
+    this._viewIndex = new Map(this._view.map((row, i) => [row._id, i]));
+    this._buildDisplay();
+    this._layout.setKeys(this._display ? this._display.map((item) => typeof item === "number" ? this._view[item]._id : `${item.key}`) : this._view.map((row) => row._id));
+    this._table.setAttribute("aria-rowcount", String(this._view.length + 1));
+    this._renderWindow(true);
     this._showMessage(this._view.length || this._append?.loading ? null : this.t("noRows"));
     this._syncSelectAll();
   }
-  _renderMore() {
-    this._renderRows(this._rendered + this.options.renderChunk);
-    this._showMessage(this._view.length ? null : this.t("noRows"));
-    this._syncSelectAll();
+  /** Height of the visible area below the sticky header and above the sticky footer. */
+  _viewportHeight() {
+    const view = this._scroller.ownerDocument.defaultView;
+    const max = view ? parseFloat(view.getComputedStyle(this._scroller).maxHeight) : NaN;
+    const height = Math.max(this._scroller.clientHeight, Number.isFinite(max) ? max : 0) || (typeof this.options.height === "number" ? this.options.height : 480);
+    return Math.max(1, height - (this._thead.offsetHeight || 0) - (this._tfoot.offsetHeight || 0));
   }
-  _renderRows(upTo) {
-    const end = Math.min(upTo, this._view.length);
-    const fragment = document.createDocumentFragment();
-    for (let i = this._rendered; i < end; i++) fragment.append(this._createRow(this._view[i]));
-    this._tbody.append(fragment);
-    this._rendered = end;
+  /**
+   * Renders only the rows (and, with many columns, the columns) in view, plus spacers that keep the
+   * scroll size of the rest. Rows that stay in view are reused.
+   * @param force re-render every row (columns or data changed)
+   */
+  _renderWindow(force = false) {
+    const plan = this._columnPlan();
+    if (!this._plan || plan.key !== this._plan.key) {
+      this._renderHeader();
+      this._renderFooter();
+      force = true;
+    }
+    const scrollTop = Math.max(0, this._scroller.scrollTop - (this._thead.offsetHeight || 0));
+    const [start, end] = this._layout.window(scrollTop, this._viewportHeight(), this.options.overscan);
+    if (!force && start === this._rowWindow[0] && end === this._rowWindow[1]) return;
+    if (this._editing) {
+      const index = this._displayOf(this._editing.id) ?? -1;
+      if (index < start || index >= end) {
+        if (!this._closeEditor(true)) this._closeEditor(false);
+      }
+    }
+    this._rowWindow = [start, end];
+    const rows = [];
+    const next = /* @__PURE__ */ new Map();
+    const groups = /* @__PURE__ */ new Map();
+    for (let i = start; i < end; i++) {
+      const item = this._display ? this._display[i] : i;
+      if (typeof item !== "number") {
+        const tr2 = (force ? void 0 : this._groupEls.get(item.key)) ?? this._createGroupRow(item, i);
+        groups.set(item.key, tr2);
+        rows.push(tr2);
+        continue;
+      }
+      const row = this._view[item];
+      let tr = force ? void 0 : this._rowEls.get(row._id);
+      if (!tr) tr = this._createRow(row, i);
+      next.set(row._id, tr);
+      rows.push(tr);
+    }
+    this._rowEls = next;
+    this._groupEls = groups;
+    const current = this._plan;
+    const columnCount = (current.selection ? 1 : 0) + current.left.length + current.center.length + current.right.length + (current.before ? 1 : 0) + (current.after ? 1 : 0);
+    this._setSpacer(this._topSpacer, this._layout.offsetOf(start), columnCount);
+    this._setSpacer(this._bottomSpacer, this._layout.total - this._layout.offsetOf(end), columnCount);
+    this._tbody.replaceChildren(this._topSpacer, ...rows, this._bottomSpacer);
+    this._measureRows(start, rows);
+    this._paintRange();
   }
-  _rowClasses(row, changed) {
+  _setSpacer(tr, height, columns) {
+    let td = tr.firstElementChild;
+    if (!td) {
+      td = h("td");
+      tr.append(td);
+    }
+    td.colSpan = Math.max(1, columns);
+    td.style.height = `${Math.max(0, height)}px`;
+    tr.hidden = height <= 0;
+  }
+  /**
+   * Rows taller than the default (wrapped text) are measured, so the scroll size stays exact.
+   * The first rendered row also calibrates the default height when no rowHeight is configured.
+   */
+  _measureRows(start, rows) {
+    if (!rows.length) return;
+    let changed = false;
+    if (!this._calibrated) {
+      const height = rows[0].offsetHeight;
+      if (height > 0) {
+        this._layout.setDefaultHeight(height);
+        this._calibrated = true;
+        changed = true;
+      }
+    }
+    if (this.columns.some((c) => c.wrap && c.visible)) {
+      rows.forEach((tr, i) => {
+        const height = tr.offsetHeight;
+        if (height > 0 && this._layout.measure(start + i, height)) changed = true;
+      });
+    }
+    if (changed) {
+      const [first, last] = this._rowWindow;
+      const columns = this._topSpacer.firstElementChild?.colSpan ?? 1;
+      this._setSpacer(this._topSpacer, this._layout.offsetOf(first), columns);
+      this._setSpacer(this._bottomSpacer, this._layout.total - this._layout.offsetOf(last), columns);
+    }
+  }
+  /**
+   * Scrolls so that a row is visible.
+   * @param index position in the filtered and sorted rows
+   */
+  scrollToRow(index) {
+    if (index < 0 || index >= this._view.length) return;
+    const id = this._view[index]._id;
+    if (this._display && !this._displayIndex.has(id)) this._openGroupsOf(id);
+    const position = this._displayOf(id) ?? index;
+    const top = this._layout.offsetOf(position);
+    const bottom = top + this._layout.heightOf(position);
+    const viewTop = this._scroller.scrollTop;
+    const viewport = this._viewportHeight();
+    if (top < viewTop) this._scroller.scrollTop = top;
+    else if (bottom > viewTop + viewport) this._scroller.scrollTop = bottom - viewport;
+    this._renderWindow();
+  }
+  /** Scrolls horizontally so that a column is rendered and visible. */
+  _scrollToColumn(field) {
+    const column = this.getColumn(field);
+    if (!column || column.pinned === "left" || column.pinned === "right") return;
+    const scrollable = this.visibleColumns.filter((c) => c.pinned !== "left" && c.pinned !== "right");
+    let x = 0;
+    for (const c of scrollable) {
+      if (c.field === field) break;
+      x += widthOf(c);
+    }
+    const pinnedLeft = (this._plan?.selection ? SELECTION_WIDTH : 0) + (this._plan?.left ?? []).reduce((sum2, c) => sum2 + widthOf(c), 0);
+    const viewLeft = this._scroller.scrollLeft;
+    const width = (this._scroller.clientWidth || 1200) - pinnedLeft;
+    if (x < viewLeft) this._scroller.scrollLeft = x;
+    else if (x + widthOf(column) > viewLeft + width) this._scroller.scrollLeft = x + widthOf(column) - width;
+    this._renderWindow();
+  }
+  _rowClasses(row, changed, index) {
     const classes = ["ig-row"];
+    if (index % 2 === 1) classes.push("ig-row-alt");
     if (this._selected.has(row._id)) classes.push("ig-selected");
     if (this._tracker?.isInserted(row._id)) classes.push("ig-row-inserted");
     else if (Object.keys(changed).length) classes.push("ig-row-updated");
     if (typeof this.options.rowClass === "function") classes.push(this.options.rowClass(this._publicRow(row)) ?? "");
     return classes;
   }
-  _createRow(row) {
-    const tr = h("tr", { dataset: { id: row._id }, "aria-selected": String(this._selected.has(row._id)) });
+  _createRow(row, index = this._displayOf(row._id) ?? 0) {
+    const tr = h("tr", { dataset: { id: row._id }, "aria-selected": String(this._selected.has(row._id)), "aria-rowindex": String(index + 2) });
     const changed = this._tracker ? this._tracker.changedFields(row._id, this._readers) : {};
-    tr.className = this._rowClasses(row, changed).join(" ").trim();
+    tr.className = this._rowClasses(row, changed, index).join(" ").trim();
     this._applyFormats(tr, this.options.rowFormats, row);
-    if (this.selectionMode !== "none" && this.options.selection.checkbox) {
-      tr.append(h("td", { class: "ig-select-cell" }, h("input", {
+    const plan = this._plan ?? this._columnPlan();
+    tr.append(...this._planCells(
+      plan,
+      (column) => this._createCell(row, column, changed[column.field]),
+      () => h("td", { class: "ig-spacer-cell", "aria-hidden": "true" }),
+      () => h("td", { class: "ig-select-cell" }, h("input", {
         type: this.selectionMode === "single" ? "radio" : "checkbox",
         tabindex: "-1",
         checked: this._selected.has(row._id),
         "aria-label": "select"
-      })));
-    }
-    for (const column of this.visibleColumns) tr.append(this._createCell(row, column, changed[column.field]));
+      }))
+    ));
     return tr;
+  }
+  /** Re-renders one row in place when it is in view. */
+  _replaceRow(id) {
+    const old = this._rowEls.get(id);
+    const index = this._viewIndex.get(id);
+    if (!old || index === void 0) {
+      if (this._display && index !== void 0) this._refreshGroupRows(id);
+      return;
+    }
+    if (this._display && this._groupPath(this._view[index]).at(-1) !== this._groupOf.get(id)) {
+      this._renderBody();
+      return;
+    }
+    const tr = this._createRow(this._view[index], this._displayOf(id) ?? index);
+    old.replaceWith(tr);
+    this._rowEls.set(id, tr);
+    if (this._display) this._refreshGroupRows(id);
+    if (this._focus) this._paintRange();
   }
   _isEditable(column, row) {
     if (!column) return false;
@@ -4915,6 +6217,8 @@ var IntelligentGrid = class {
     if (change) classes.push("ig-cell-changed");
     if (!this._isEditable(column, row)) classes.push("ig-readonly");
     if (NUMERIC_TYPES.has(column.type) && typeof value === "number" && value < 0) classes.push("ig-negative");
+    if (column.wrap) classes.push("ig-wrap");
+    if (this._comments.get(row._id)?.has(column.field)) classes.push("ig-has-comment");
     if (this._active && this._active.id === row._id && this._active.field === column.field) classes.push("ig-active");
     if (typeof column.cellClass === "function") classes.push(column.cellClass(value, this._publicRow(row), column) ?? "");
     else if (column.cellClass) classes.push(column.cellClass);
@@ -4928,6 +6232,9 @@ var IntelligentGrid = class {
       if (output instanceof Node) td.append(output);
       else if (column.html) td.innerHTML = output ?? "";
       else td.textContent = output ?? "";
+    } else if (column.sparkline && !isErrorCode(value)) {
+      td.classList.add("ig-sparkline-cell");
+      td.append(sparkline(sparklineValues(value), column.sparkline === true ? {} : column.sparkline));
     } else if (column.type === "boolean" && !isErrorCode(value) && !formula) {
       td.append(h("input", {
         type: "checkbox",
@@ -4939,14 +6246,41 @@ var IntelligentGrid = class {
     } else {
       td.textContent = formatted;
     }
-    this._applyFormats(td, column.conditionalFormats, row, value);
+    this._applyFormats(td, column.conditionalFormats, row, value, column);
     return td;
+  }
+  _columnStats(column) {
+    if (!this._stats.has(column.field)) this._stats.set(column.field, columnStats(this._view.map((r) => r[column.field])));
+    return this._stats.get(column.field) ?? null;
+  }
+  _applyPreset(td, format, value, column) {
+    const stats = this._columnStats(column);
+    if (!stats) return;
+    if (format.type === "dataBar") {
+      const low = format.min ?? Math.min(0, stats.min);
+      const high = format.max ?? stats.max;
+      td.classList.add("ig-databar");
+      if (format.showValue === false) td.classList.add("ig-databar-only");
+      td.style.setProperty("--ig-bar", `${(ratio(value, low, high) * 100).toFixed(1)}%`);
+      if (format.color) td.style.setProperty("--ig-bar-color", format.color);
+    } else if (format.type === "colorScale") {
+      td.style.backgroundColor = scaleColor(colorScaleColors(format), ratio(value, format.min ?? stats.min, format.max ?? stats.max));
+    } else {
+      const { icon, tone } = iconFor(format, value, stats);
+      const mark = h("i", { class: `ig-cf-icon ig-cf-icon-${tone}`, "aria-hidden": "true", text: icon });
+      if (format.showValue === false) td.replaceChildren(mark);
+      else td.prepend(mark);
+    }
   }
   /**
    * Conditional formats: [{formula: '=[@total] > 1000', className, style}] or [{when(value, row), ...}]
    */
-  _applyFormats(element, formats, row, value) {
+  _applyFormats(element, formats, row, value, column) {
     for (const format of formats ?? []) {
+      if (isPreset(format)) {
+        if (column && typeof value === "number" && Number.isFinite(value)) this._applyPreset(element, format, value, column);
+        continue;
+      }
       let hit = false;
       if (typeof format.when === "function") hit = !!format.when(value, this._publicRow(row));
       else if (format.formula) hit = this.calc.evaluate(format.formula, this.store.get(row._id) ?? row) === true;
@@ -4961,51 +6295,60 @@ var IntelligentGrid = class {
    */
   _syncRows(ids) {
     const targets = ids ? new Set(ids) : null;
+    const presets = this.visibleColumns.filter((c) => c.conditionalFormats?.some(isPreset));
+    const statsOf = () => JSON.stringify(presets.map((c) => this._columnStats(c)));
+    const before = presets.length ? statsOf() : null;
+    const changed = [];
     this._view.forEach((row, i) => {
       if (targets && !targets.has(row._id)) return;
       const fresh = this.store.get(row._id);
       if (!fresh) return;
       this._view[i] = { ...fresh };
-      if (i >= this._rendered) return;
-      const tr = this._tbody.children[i];
-      if (!tr || this._editing && this._editing.id === row._id) return;
-      tr.replaceWith(this._createRow(this._view[i]));
+      changed.push(row._id);
     });
-    if (!ids) {
-      this._rendered = Math.min(this._rendered, this._view.length);
-      while (this._tbody.rows.length > this._rendered) this._tbody.lastElementChild?.remove();
-      this._showMessage(this._view.length ? null : this.t("noRows"));
+    this._stats.clear();
+    if (before !== null && !this._editing && statsOf() !== before) {
+      this._renderWindow(true);
+    } else {
+      for (const id of changed) {
+        if (this._editing?.id !== id) this._replaceRow(id);
+      }
     }
+    if (!ids) this._showMessage(this._view.length ? null : this.t("noRows"));
     this._renderFooter();
     this._renderNavbar();
   }
   _renderFooter() {
     clear(this._tfoot);
-    const columns = this.visibleColumns;
-    if (!columns.some((c) => c.footer)) return;
+    if (!this.visibleColumns.some((c) => c.footer)) return;
+    const plan = this._plan ?? this._columnPlan();
     const tr = h("tr", { class: "ig-footer" });
-    if (this.selectionMode !== "none" && this.options.selection.checkbox) tr.append(h("td", { class: "ig-select-cell" }));
-    for (const column of columns) {
-      if (!column.footer) {
-        tr.append(h("td"));
-        continue;
-      }
-      const value = this._footerValue(column);
-      const shortcut = typeof column.footer === "string" && /^count/i.test(column.footer);
-      const text = shortcut ? formatCell(value, { type: "integer", decimals: 0 }, {}, this.locale) : formatCell(value, column, {}, this.locale);
-      tr.append(h("td", {
-        class: `ig-cell ig-align-${column.align}${isErrorCode(value) ? " ig-error" : ""}`,
-        title: this._footerFormula(column) ?? null,
-        text: column.type === "boolean" && !isErrorCode(value) ? String(value ?? "") : text
-      }));
-    }
+    const cell = (column) => {
+      if (!column.footer) return h("td", { dataset: { field: column.field } });
+      const td = this._summaryCell(column, this._view);
+      td.dataset.field = column.field;
+      return td;
+    };
+    tr.append(...this._planCells(plan, cell, () => h("td", { class: "ig-spacer-cell" }), () => h("td", { class: "ig-select-cell" })));
     this._tfoot.append(tr);
+  }
+  /** A footer or subtotal cell: column.footer applied to the rows. */
+  _summaryCell(column, rows) {
+    const value = this._footerValue(column, rows);
+    const shortcut = typeof column.footer === "string" && /^count/i.test(column.footer);
+    const text = shortcut ? formatCell(value, { type: "integer", decimals: 0 }, {}, this.locale) : formatCell(value, column, {}, this.locale);
+    return h("td", {
+      class: `ig-cell ig-align-${column.align}${isErrorCode(value) ? " ig-error" : ""}`,
+      title: this._footerFormula(column) ?? null,
+      text: column.type === "boolean" && !isErrorCode(value) ? String(value ?? "") : text
+    });
   }
   _renderNavbar() {
     if (this.options.statusBar) {
       const total = this._append?.total ?? this.store.count();
       const parts = [this.t("status", { shown: this._view.length, total })];
       if (this._selected.size) parts.push(this.t("selected", { count: this._selected.size }));
+      if (this._notice) parts.push(this._notice);
       this._status.textContent = parts.join(" \xB7 ");
     }
     const config = this.options.navbar;
@@ -5066,6 +6409,13 @@ var IntelligentGrid = class {
       onclick: (e) => item.onClick(this, e)
     });
     for (const item of config.items ?? []) (item.position === "left" ? left : right).append(button(item));
+    const editable = config.add || config.delete || this.columns.some((c) => c.editable);
+    if (config.undo && editable) {
+      right.append(
+        h("button", { type: "button", class: "ig-btn ig-btn-icon", text: "\u21B6", "aria-label": this.t("undo"), title: this.t("undo") + (this._undo.undoLabel ? ` (${this._undo.undoLabel})` : ""), disabled: !this._undo.canUndo, onclick: () => this.undo() }),
+        h("button", { type: "button", class: "ig-btn ig-btn-icon", text: "\u21B7", "aria-label": this.t("redo"), title: this.t("redo") + (this._undo.redoLabel ? ` (${this._undo.redoLabel})` : ""), disabled: !this._undo.canRedo, onclick: () => this.redo() })
+      );
+    }
     if (config.add) right.append(button({ label: this.t("addRow"), onClick: () => this.addRow(typeof config.add === "function" ? config.add(this) : {}) }));
     if (config.delete && this.selectionMode !== "none") {
       right.append(button({
@@ -5115,6 +6465,16 @@ var IntelligentGrid = class {
         text: this.t("columns"),
         onclick: (e) => this._openColumnsMenu(e.currentTarget)
       }));
+    }
+    if (config.import) {
+      const options = config.import === true ? {} : config.import;
+      const input = h("input", { type: "file", accept: ".csv,.tsv,.txt,.xlsx", hidden: true });
+      input.addEventListener("change", async () => {
+        const file = input.files?.[0];
+        input.value = "";
+        if (file) await this._importFromNavbar(file, options);
+      });
+      right.append(input, button({ label: this.t("importFile"), onClick: () => input.click() }));
     }
     const exports = config.export === true ? ["csv", "xlsx"] : config.export || [];
     if (exports.includes("csv")) right.append(button({ label: this.t("exportCsv"), onClick: () => this.exportCSV() }));
@@ -5185,43 +6545,843 @@ var IntelligentGrid = class {
   }
   /* ---------------------------------------------------------------- active cell & keyboard */
   _cellElement(id, field) {
-    const index = this._view.findIndex((r) => r._id === id);
-    if (index === -1 || index >= this._rendered) return null;
-    return this._tbody.children[index]?.querySelector(`td[data-field="${CSS.escape(field)}"]`) ?? null;
+    return this._rowEls.get(id)?.querySelector(`td[data-field="${CSS.escape(field)}"]`) ?? null;
+  }
+  /**
+   * Makes a cell active (collapsing the range) or, with extend, moves the other corner of the range.
+   */
+  _selectCell(id, field, extend) {
+    if (!extend || !this._active) {
+      this._setActive(id, field);
+      return;
+    }
+    this._focus = { id, field };
+    const index = this._viewIndex.get(id);
+    if (index !== void 0) this.scrollToRow(index);
+    if (!this._cellElement(id, field)) this._scrollToColumn(field);
+    this._paintRange();
+    this.emit("rangeChange", this.getRange());
   }
   _setActive(id, field) {
     this._tbody.querySelector(".ig-active")?.classList.remove("ig-active");
+    const changed = !!this._focus;
+    this._focus = null;
     this._active = { id, field };
-    const td = this._cellElement(id, field);
-    if (td) {
-      td.classList.add("ig-active");
-      td.scrollIntoView?.({ block: "nearest", inline: "nearest" });
-    }
+    const index = this._viewIndex.get(id);
+    if (index !== void 0) this.scrollToRow(index);
+    if (!this._cellElement(id, field)) this._scrollToColumn(field);
+    this._cellElement(id, field)?.classList.add("ig-active");
+    this._paintRange();
     this.emit("activeCellChange", { id, field });
+    if (changed) this.emit("rangeChange", this.getRange());
   }
-  _move(rowDelta, columnDelta) {
+  /* ---------------------------------------------------------------- comments */
+  getComment(id, field) {
+    return this._comments.get(id)?.get(field) ?? null;
+  }
+  /** Comments of the rows that exist, in no particular order. */
+  getComments() {
+    const comments = [];
+    for (const [id, fields] of this._comments) {
+      if (!this.store.has(id)) continue;
+      for (const [field, text] of fields) comments.push({ id, field, text });
+    }
+    return comments;
+  }
+  /** Sets (or with null / '' removes) the comment of a cell; undoable. */
+  setComment(id, field, text) {
+    if (!this.store.has(id) || !this.getColumn(field)) return false;
+    const before = this.getComment(id, field);
+    const after = text ? text : null;
+    if (before === after) return false;
+    this.batch(() => {
+      this._writeComment(id, field, after);
+      if (!this._replaying) this._undo.record({ kind: "comment", id, field, before, after });
+    }, "comment");
+    this._replaceRow(id);
+    this._renderNavbar();
+    this.emit("commentChange", { id, field, text: after, oldText: before });
+    return true;
+  }
+  _writeComment(id, field, text) {
+    const fields = this._comments.get(id);
+    if (text) {
+      if (fields) fields.set(field, text);
+      else this._comments.set(id, /* @__PURE__ */ new Map([[field, text]]));
+    } else if (fields) {
+      fields.delete(field);
+      if (!fields.size) this._comments.delete(id);
+    }
+  }
+  /** Opens the comment editor of a cell (Shift+F2). Ctrl+Enter saves, Esc cancels. */
+  editComment(id, field) {
+    const td = this._cellElement(id, field);
+    if (!td) return;
+    this._hideCommentTip();
+    const textarea = h("textarea", { class: "ig-input ig-comment-input", rows: 4, "aria-label": this.t("comment") });
+    textarea.value = this.getComment(id, field) ?? "";
+    const save = () => {
+      this.setComment(id, field, textarea.value.trim() || null);
+      this.closePopover();
+      this.focus();
+    };
+    const menu = h(
+      "div",
+      { class: "ig-popover ig-comment-editor", role: "dialog", "aria-label": this.t("comment") },
+      textarea,
+      h(
+        "div",
+        { class: "ig-comment-actions" },
+        h("button", { type: "button", class: "ig-btn", text: this.t("deleteComment"), onclick: () => {
+          textarea.value = "";
+          save();
+        } }),
+        h("button", { type: "button", class: "ig-btn", text: this.t("cancel"), onclick: () => {
+          this.closePopover();
+          this.focus();
+        } }),
+        h("button", { type: "button", class: "ig-btn ig-btn-primary", text: this.t("saveComment"), onclick: save })
+      )
+    );
+    textarea.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        save();
+      } else if (e.key === "Escape") {
+        this.closePopover();
+        this.focus();
+      }
+    });
+    this.showPopover(menu, td);
+    textarea.focus();
+  }
+  _showCommentTip(td) {
+    const id = td.closest("tr")?.dataset.id;
+    const text = id ? this.getComment(id, td.dataset.field) : null;
+    if (!text || this._popover) return;
+    this._commentTip ??= h("div", { class: "ig-comment-tip", role: "tooltip" });
+    this._commentTip.textContent = text;
+    this.root.append(this._commentTip);
+    const rootBox = this.root.getBoundingClientRect();
+    const box = td.getBoundingClientRect();
+    this._commentTip.style.left = `${Math.max(0, Math.min(box.right - rootBox.left + 4, rootBox.width - 220))}px`;
+    this._commentTip.style.top = `${box.top - rootBox.top}px`;
+  }
+  _hideCommentTip() {
+    this._commentTip?.remove();
+  }
+  /* ---------------------------------------------------------------- duplicates */
+  /**
+   * Rows that repeat an earlier row in the given columns (the first of each set is not included).
+   * @return ids, in view order
+   */
+  findDuplicates({ fields, matchCase = false, scope = "filtered" } = {}) {
+    const columns = fields ?? this.visibleColumns.filter((c) => !c.formula).map((c) => c.field);
+    const rows = scope === "all" ? this.store.ids().map((id) => this.store.get(id)) : this._view;
+    const seen = /* @__PURE__ */ new Set();
+    const duplicates = [];
+    for (const row of rows) {
+      const key = JSON.stringify(columns.map((field) => {
+        const value = this._publicValue(row[field]);
+        return typeof value === "string" && !matchCase ? value.trim().toLocaleLowerCase(this.locale) : value;
+      }));
+      if (seen.has(key)) duplicates.push(row._id);
+      else seen.add(key);
+    }
+    return duplicates;
+  }
+  /**
+   * Deletes the duplicate rows (see findDuplicates), as one undo step. No confirmation is asked.
+   * @return removed ids
+   */
+  removeDuplicates(options = {}) {
+    const ids = this.findDuplicates(options);
+    return ids.length ? this.deleteRows(ids) : [];
+  }
+  /* ---------------------------------------------------------------- import */
+  /**
+   * Imports a .csv, .tsv, .txt or .xlsx file (for example from an <input type="file">).
+   * Headers are matched to columns by field or title, ignoring case; values are read like typed text.
+   */
+  async importFile(file, options = {}) {
+    const bytes = new Uint8Array(await readBlob(file));
+    const zip2 = bytes[0] === 80 && bytes[1] === 75;
+    if (zip2 || /\.xlsx$/i.test(file.name ?? "")) return this.importXLSX(bytes, options);
+    const text = new TextDecoder().decode(bytes);
+    return this.importCSV(text, { delimiter: /\.tsv$/i.test(file.name ?? "") ? "	" : void 0, ...options });
+  }
+  async _importFromNavbar(file, options) {
+    const summary = this.getChangeSummary();
+    if ((options.mode ?? "replace") === "replace" && this.hasChanges() && !await this.confirm({
+      action: "import",
+      title: this.t("importFile"),
+      message: this.t("confirmImport", { count: summary.total }),
+      confirmLabel: this.t("importFile"),
+      danger: true
+    })) return;
+    try {
+      const result = await this.importFile(file, options);
+      this._showNotice(result.errors.length ? this.t("importErrors", { count: result.rows, errors: result.errors.length }) : this.t("importDone", { count: result.rows }));
+    } catch (error) {
+      this._showNotice(error instanceof Error ? error.message : String(error));
+      this.emit("importError", { error });
+    }
+  }
+  _showNotice(text) {
+    this._notice = text;
+    clearTimeout(this._noticeTimer);
+    this._noticeTimer = setTimeout(() => {
+      this._notice = null;
+      this._renderNavbar();
+    }, 6e3);
+    this._renderNavbar();
+  }
+  /** Imports CSV / TSV text. */
+  importCSV(text, options = {}) {
+    return this.importTable(parseDelimited(text, options.delimiter), options);
+  }
+  /** Imports the first sheet (or options.sheet) of an .xlsx file. */
+  async importXLSX(data, options = {}) {
+    const sheet = await readXlsx(data, { sheet: options.sheet });
+    return { ...this.importTable(sheet.rows, options), sheet: sheet.name };
+  }
+  /**
+   * Imports rows of cells (the first one being the header unless header: false).
+   * Text is parsed like typed input (numbers, dates, options in the grid locale); other values are kept.
+   */
+  importTable(table, { mode: mode2 = "replace", header = true, createColumns } = {}) {
+    const lines = table.filter((line) => line.some((cell) => cell !== null && cell !== void 0 && cell !== ""));
+    const headerLine = header ? (lines.shift() ?? []).map((cell) => String(cell ?? "").trim()) : null;
+    const create = createColumns ?? this.columns.length === 0;
+    const lookup = /* @__PURE__ */ new Map();
+    for (const column of this.columns) {
+      lookup.set(column.field.toLocaleLowerCase(this.locale), column);
+      lookup.set(column.title.toLocaleLowerCase(this.locale), column);
+    }
+    const skipped = [];
+    const created = [];
+    const targets = headerLine ? headerLine.map((title, i) => {
+      const column = title ? lookup.get(title.toLocaleLowerCase(this.locale)) : void 0;
+      if (column) return column.formula ? null : { field: column.field, column };
+      if (!title || !create) {
+        if (title) skipped.push(title);
+        return null;
+      }
+      const field = created.some((c) => c.field === title) ? `${title} ${i + 1}` : title;
+      created.push({ field, title, type: inferType(lines.map((line) => line[i])) });
+      return { field, column: null };
+    }) : this.columns.filter((c) => !c.formula).map((column) => ({ field: column.field, column }));
+    if (created.length) {
+      this._setColumns([...this.columns.map(({ ...column }) => column), ...created]);
+      this._renderHeader();
+      for (const target of targets) if (target && !target.column) target.column = this.getColumn(target.field);
+    }
+    const errors = [];
+    const rows = lines.map((line, n) => {
+      const row = {};
+      targets.forEach((target, i) => {
+        if (!target?.column) return;
+        const raw = line[i];
+        if (raw === null || raw === void 0 || raw === "") return;
+        if (typeof raw !== "string") {
+          row[target.field] = raw;
+          return;
+        }
+        const parsed = parseInput(raw, target.column, this.locale);
+        if (parsed.error) errors.push({ line: n + (header ? 2 : 1), field: target.field, value: raw, error: this.t(parsed.error) });
+        else row[target.field] = parsed.value;
+      });
+      return row;
+    });
+    if (mode2 === "append") this.addRows(rows);
+    else this.setData(rows);
+    const result = { rows: rows.length, fields: targets.filter((t) => t !== null).map((t) => t.field), skipped, errors };
+    this.emit("import", { ...result });
+    return result;
+  }
+  /* ---------------------------------------------------------------- grouping */
+  /**
+   * Groups the rows by one or more fields (outermost first), with a group row showing the value,
+   * the row count and subtotals (column `subtotal`, or its `footer`). Pass [] or null to ungroup.
+   */
+  setGroupBy(fields) {
+    this._groupBy = (fields ?? []).filter((field) => this.getColumn(field));
+    this._collapsed.clear();
+    this._knownGroups.clear();
+    this._scroller.scrollTop = 0;
+    this.refresh();
+    this.emit("groupChange", { groupBy: [...this._groupBy] });
+  }
+  getGroupBy() {
+    return [...this._groupBy];
+  }
+  /** Groups in display order, including the ones inside collapsed groups. */
+  getGroups() {
+    const groups = [];
+    this._eachGroup((group) => {
+      groups.push({ key: group.key, level: group.level, field: group.field, value: this._publicValue(group.value), count: group.end - group.start, collapsed: this._collapsed.has(group.key) });
+    });
+    return groups;
+  }
+  /** Opens or closes a group (by key, see getGroups()); without `open` it toggles. */
+  toggleGroup(key, open) {
+    const collapse = open === void 0 ? !this._collapsed.has(key) : !open;
+    if (collapse === this._collapsed.has(key)) return;
+    if (collapse) this._collapsed.add(key);
+    else this._collapsed.delete(key);
+    if (collapse && this._active && this._groupOf.get(this._active.id)?.startsWith(key)) {
+      this._active = null;
+      this._focus = null;
+    }
+    this._renderBody();
+    this.emit("groupToggle", { key, collapsed: collapse });
+  }
+  expandGroups() {
+    this._collapsed.clear();
+    this._collapseNew = false;
+    this._renderBody();
+  }
+  collapseGroups() {
+    this._eachGroup((group) => {
+      this._collapsed.add(group.key);
+    });
+    this._collapseNew = true;
+    this._active = null;
+    this._focus = null;
+    this._renderBody();
+  }
+  _publicValue(value) {
+    return value === "" || value === void 0 ? null : value;
+  }
+  _groupPart(field, value) {
+    const v = this._publicValue(value);
+    return `${field}=${v === null ? "" : `${typeof v}:${String(v)}`}`;
+  }
+  /** Keys of the groups a row belongs to, outermost first. */
+  _groupPath(row) {
+    const keys = [];
+    let key = "";
+    for (const field of this._groupBy) {
+      key = key ? `${key}${this._groupPart(field, row[field])}` : this._groupPart(field, row[field]);
+      keys.push(key);
+    }
+    return keys;
+  }
+  _sortGroups() {
+    const fields = this._groupBy.map((field) => ({ field, dir: this._sort.find((s) => s.field === field)?.dir ?? "asc" }));
+    this._view.sort((a, b) => {
+      for (const { field, dir } of fields) {
+        const result = compareCells(a[field], b[field], { dir, locale: this.locale });
+        if (result) return result;
+      }
+      return 0;
+    });
+  }
+  /** Calls fn for every group in display order, with whether it is hidden inside a collapsed group. */
+  _eachGroup(fn, onRows) {
+    const fields = this._groupBy;
+    if (!fields.length) return;
+    const walk = (start, end, level, parent, hidden) => {
+      if (level === fields.length) {
+        if (!hidden) onRows?.(start, end);
+        return;
+      }
+      const field = fields[level];
+      let i = start;
+      while (i < end) {
+        const part = this._groupPart(field, this._view[i][field]);
+        let j = i + 1;
+        while (j < end && this._groupPart(field, this._view[j][field]) === part) j++;
+        const key = parent ? `${parent}${part}` : part;
+        const group = { key, level, field, value: this._view[i][field], start: i, end: j };
+        fn(group, hidden);
+        walk(i, j, level + 1, key, hidden || this._collapsed.has(key));
+        i = j;
+      }
+    };
+    walk(0, this._view.length, 0, "", false);
+  }
+  _buildDisplay() {
+    this._displayIndex.clear();
+    this._groupOf.clear();
+    if (!this._groupBy.length) {
+      this._display = null;
+      return;
+    }
+    const display = [];
+    this._eachGroup((group, hidden) => {
+      if (!this._knownGroups.has(group.key)) {
+        this._knownGroups.add(group.key);
+        if (this._collapseNew) this._collapsed.add(group.key);
+      }
+      if (group.level === this._groupBy.length - 1) {
+        for (let i = group.start; i < group.end; i++) this._groupOf.set(this._view[i]._id, group.key);
+      }
+      if (!hidden) display.push(group);
+    }, (start, end) => {
+      for (let i = start; i < end; i++) {
+        this._displayIndex.set(this._view[i]._id, display.length);
+        display.push(i);
+      }
+    });
+    this._display = display;
+  }
+  /** Position of a row in the rendered list; undefined when it is hidden in a collapsed group. */
+  _displayOf(id) {
+    return this._display ? this._displayIndex.get(id) : this._viewIndex.get(id);
+  }
+  /** The nearest view index at or after (direction 1) or before (-1) that is not hidden. */
+  _visibleRow(index, direction) {
+    if (!this._display) return index;
+    for (let i = index; i >= 0 && i < this._view.length; i += direction) {
+      if (this._displayIndex.has(this._view[i]._id)) return i;
+    }
+    for (let i = index - direction; i >= 0 && i < this._view.length; i -= direction) {
+      if (this._displayIndex.has(this._view[i]._id)) return i;
+    }
+    return index;
+  }
+  _openGroupsOf(id) {
+    const key = this._groupOf.get(id);
+    if (!key) return;
+    let changed = false;
+    for (const collapsed of [...this._collapsed]) {
+      if (key === collapsed || key.startsWith(`${collapsed}`)) {
+        this._collapsed.delete(collapsed);
+        changed = true;
+      }
+    }
+    if (changed) this._renderBody();
+  }
+  /** Re-renders the visible group rows that contain a row (their subtotals changed). */
+  _refreshGroupRows(id) {
+    const key = this._groupOf.get(id);
+    if (!key || !this._display) return;
+    for (const [groupKey, tr] of this._groupEls) {
+      if (key !== groupKey && !key.startsWith(`${groupKey}`)) continue;
+      const position = Number(tr.dataset.position);
+      const item = this._display[position];
+      if (typeof item !== "object" || item.key !== groupKey) continue;
+      const fresh = this._createGroupRow(item, position);
+      tr.replaceWith(fresh);
+      this._groupEls.set(groupKey, fresh);
+    }
+  }
+  _createGroupRow(group, position) {
+    const collapsed = this._collapsed.has(group.key);
+    const column = this.getColumn(group.field);
+    const count = group.end - group.start;
+    const tr = h("tr", {
+      class: `ig-group-row ig-group-level-${group.level}${collapsed ? " ig-group-collapsed" : ""}`,
+      dataset: { group: group.key, position: String(position) },
+      "aria-expanded": String(!collapsed),
+      "aria-level": String(group.level + 1),
+      "aria-rowindex": String(position + 2)
+    });
+    const plan = this._plan ?? this._columnPlan();
+    const first = [...plan.left, ...plan.center, ...plan.right][0];
+    const rows = this._view.slice(group.start, group.end);
+    const value = group.value;
+    const text = value === "" || value === null || value === void 0 ? this.t("blankGroup") : formatCell(value, column, this._publicRow(this._view[group.start]) ?? {}, this.locale);
+    tr.append(...this._planCells(
+      plan,
+      (c) => {
+        if (c === first) {
+          return h(
+            "td",
+            { class: "ig-cell ig-group-label", style: { paddingLeft: `${8 + group.level * 18}px` } },
+            h("button", {
+              type: "button",
+              class: "ig-group-toggle",
+              tabindex: "-1",
+              "aria-label": this.t(collapsed ? "expandGroup" : "collapseGroup"),
+              text: collapsed ? "\u25B8" : "\u25BE"
+            }),
+            h("span", { class: "ig-group-title", text: `${column.title}: ${text}` }),
+            h("span", { class: "ig-group-count", text: ` (${formatCell(count, { type: "integer", decimals: 0 }, {}, this.locale)})` })
+          );
+        }
+        const subtotal = c.subtotal === void 0 ? c.footer : c.subtotal;
+        if (!subtotal) return h("td", { class: "ig-cell" });
+        return this._summaryCell({ ...c, footer: subtotal }, rows);
+      },
+      () => h("td", { class: "ig-spacer-cell" }),
+      () => h("td", { class: "ig-select-cell" })
+    ));
+    return tr;
+  }
+  /* ---------------------------------------------------------------- ranges */
+  /** Row and column positions of the selected range, or null. */
+  _rangeBounds() {
+    if (!this._active) return null;
+    const columns = this.visibleColumns.map((c) => c.field);
+    const focus = this._focus ?? this._active;
+    const ra = this._viewIndex.get(this._active.id);
+    const rb = this._viewIndex.get(focus.id);
+    const ca = columns.indexOf(this._active.field);
+    const cb = columns.indexOf(focus.field);
+    if (ra === void 0 || rb === void 0 || ca === -1 || cb === -1) return null;
+    return { r1: Math.min(ra, rb), r2: Math.max(ra, rb), c1: Math.min(ca, cb), c2: Math.max(ca, cb) };
+  }
+  /**
+   * The selected range: from the active cell to the other corner.
+   * @return {from, to, rows (ids, in display order), fields} or null
+   */
+  getRange() {
+    const bounds = this._rangeBounds();
+    if (!bounds || !this._active) return null;
+    const fields = this.visibleColumns.slice(bounds.c1, bounds.c2 + 1).map((c) => c.field);
+    const rows = this._view.slice(bounds.r1, bounds.r2 + 1).map((r) => r._id);
+    return { from: { ...this._active }, to: { ...this._focus ?? this._active }, rows, fields };
+  }
+  /** Selects the cells between two corners; `from` becomes the active cell. */
+  setRange(from, to = from) {
+    this._setActive(from.id, from.field);
+    if (to.id !== from.id || to.field !== from.field) this._selectCell(to.id, to.field, true);
+  }
+  /** Values of the selected range as rows of stored values. */
+  getRangeValues() {
+    const range = this.getRange();
+    if (!range) return [];
+    return range.rows.map((id) => {
+      const row = this.getRow(id);
+      return range.fields.map((field) => row[field]);
+    });
+  }
+  /** Clears every editable cell of the range, as one undo step. @return cleared cells */
+  clearRange() {
+    const range = this.getRange();
+    if (!range) return 0;
+    let cleared = 0;
+    this.batch(() => {
+      for (const id of range.rows) {
+        for (const field of range.fields) {
+          const column = this.getColumn(field);
+          const data = this.store.get(id);
+          if (!this._isEditable(column, data) || data?.[field] === "" || data?.[field] === void 0) continue;
+          if (this.setCellValue(id, field, null, { source: "edit" }).ok) cleared++;
+        }
+      }
+    }, "clear");
+    return cleared;
+  }
+  /** Marks the cells of the range in the rendered rows (and the fill handle on its corner). */
+  _paintRange() {
+    const bounds = this._rangeBounds();
+    const multiple = !!bounds && (bounds.r1 !== bounds.r2 || bounds.c1 !== bounds.c2);
+    const columns = new Map(this.visibleColumns.map((c, i) => [c.field, i]));
+    for (const [id, tr] of this._rowEls) {
+      const r = this._viewIndex.get(id) ?? -1;
+      for (const td of tr.querySelectorAll("td[data-field]")) {
+        const c = columns.get(td.dataset.field) ?? -1;
+        const inside = multiple && r >= bounds.r1 && r <= bounds.r2 && c >= bounds.c1 && c <= bounds.c2;
+        td.classList.toggle("ig-in-range", inside);
+        td.classList.toggle("ig-range-top", inside && r === bounds.r1);
+        td.classList.toggle("ig-range-bottom", inside && r === bounds.r2);
+        td.classList.toggle("ig-range-left", inside && c === bounds.c1);
+        td.classList.toggle("ig-range-right", inside && c === bounds.c2);
+        td.classList.toggle("ig-find-match", this._highlighted.has(`${id}\0${td.dataset.field}`));
+        const corner = !!bounds && r === bounds.r2 && c === bounds.c2;
+        const handle = td.querySelector(".ig-fill-handle");
+        if (corner && !handle && this._fillEnabled()) td.append(h("span", { class: "ig-fill-handle", "aria-hidden": "true" }));
+        else if (!corner && handle) handle.remove();
+      }
+    }
+  }
+  /** Whether the fill handle is shown (something editable). */
+  _fillEnabled() {
+    return this.columns.some((c) => c.editable);
+  }
+  /** Range or fill drag: follows the pointer and scrolls when it nears an edge of the grid. */
+  _startDrag(e, fill) {
+    this._dragging = true;
+    this._filling = fill ? { direction: "down", count: 0 } : null;
+    this._pointer = { x: e.clientX, y: e.clientY };
+    this.root.classList.add("ig-dragging");
+    const move = (event) => {
+      this._pointer = { x: event.clientX, y: event.clientY };
+      if (!this._autoScroll) this._autoScroll = requestAnimationFrame(() => this._dragScroll());
+    };
+    const stop = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+      cancelAnimationFrame(this._autoScroll);
+      this._autoScroll = 0;
+      this._dragging = false;
+      this.root.classList.remove("ig-dragging");
+      const filling = this._filling;
+      this._filling = null;
+      this._paintFill(null);
+      if (filling?.count) this.fill(filling.direction, filling.count);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+  }
+  _dragScroll() {
+    this._autoScroll = 0;
+    if (!this._dragging || !this._pointer) return;
+    const box = this._scroller.getBoundingClientRect();
+    const edge = 24;
+    const { x, y } = this._pointer;
+    const dy = y < box.top + edge ? y - box.top - edge : y > box.bottom - edge ? y - box.bottom + edge : 0;
+    const dx = x < box.left + edge ? x - box.left - edge : x > box.right - edge ? x - box.right + edge : 0;
+    if (!dx && !dy) return;
+    this._scroller.scrollTop += dy;
+    this._scroller.scrollLeft += dx;
+    const td = document.elementFromPoint?.(Math.max(box.left + 1, Math.min(box.right - 1, x)), Math.max(box.top + 1, Math.min(box.bottom - 1, y)))?.closest("td[data-field]");
+    if (td && this._tbody.contains(td)) this._dragOver(td);
+    this._autoScroll = requestAnimationFrame(() => this._dragScroll());
+  }
+  _dragOver(td) {
+    const id = td.closest("tr")?.dataset.id;
+    if (!id) return;
+    if (!this._filling) {
+      this._selectCell(id, td.dataset.field, true);
+      return;
+    }
+    const bounds = this._rangeBounds();
+    const r = this._viewIndex.get(id);
+    const c = this.visibleColumns.findIndex((column) => column.field === td.dataset.field);
+    if (!bounds || r === void 0 || c === -1) return;
+    const down = r - bounds.r2;
+    const up = bounds.r1 - r;
+    const right = c - bounds.c2;
+    const left = bounds.c1 - c;
+    const best = Math.max(down, up, right, left);
+    let next = { direction: "down", count: 0 };
+    if (best > 0) {
+      if (down === best) next = { direction: "down", count: down };
+      else if (up === best) next = { direction: "up", count: up };
+      else if (right === best) next = { direction: "right", count: right };
+      else next = { direction: "left", count: left };
+    }
+    this._filling = next;
+    this._paintFill(next);
+  }
+  /** Cells a fill would write to, as view bounds. */
+  _fillBounds(direction, count) {
+    const b = this._rangeBounds();
+    if (!b || count <= 0) return null;
+    const lastRow = this._view.length - 1;
+    const lastColumn = this.visibleColumns.length - 1;
+    switch (direction) {
+      case "down":
+        return b.r2 >= lastRow ? null : { ...b, r1: b.r2 + 1, r2: Math.min(lastRow, b.r2 + count) };
+      case "up":
+        return b.r1 <= 0 ? null : { ...b, r1: Math.max(0, b.r1 - count), r2: b.r1 - 1 };
+      case "right":
+        return b.c2 >= lastColumn ? null : { ...b, c1: b.c2 + 1, c2: Math.min(lastColumn, b.c2 + count) };
+      default:
+        return b.c1 <= 0 ? null : { ...b, c1: Math.max(0, b.c1 - count), c2: b.c1 - 1 };
+    }
+  }
+  _paintFill(fill) {
+    const target = fill ? this._fillBounds(fill.direction, fill.count) : null;
+    const columns = new Map(this.visibleColumns.map((c, i) => [c.field, i]));
+    for (const [id, tr] of this._rowEls) {
+      const r = this._viewIndex.get(id) ?? -1;
+      for (const td of tr.querySelectorAll("td[data-field]")) {
+        const c = columns.get(td.dataset.field) ?? -1;
+        td.classList.toggle("ig-fill-target", !!target && r >= target.r1 && r <= target.r2 && c >= target.c1 && c <= target.c2);
+      }
+    }
+  }
+  /**
+   * Copies the first row of the range into the rest of it (down, Ctrl+D) or the first column (right, Ctrl+R).
+   * @return cells written
+   */
+  fillCopy(direction = "down") {
+    const b = this._rangeBounds();
+    if (!b) return 0;
+    const rows = this._view;
     const columns = this.visibleColumns;
-    const active = this._active;
+    let written = 0;
+    this.batch(() => {
+      for (let r = b.r1; r <= b.r2; r++) {
+        for (let c = b.c1; c <= b.c2; c++) {
+          if (direction === "down" ? r === b.r1 : c === b.c1) continue;
+          const source = this.getRow(rows[direction === "down" ? b.r1 : r]._id);
+          const field = columns[c].field;
+          const value = source[direction === "down" ? field : columns[b.c1].field];
+          if (this._fillCell(rows[r]._id, field, value)) written++;
+        }
+      }
+    }, "fill");
+    return written;
+  }
+  /**
+   * Extends the selected range like Excel's fill handle: numbers and dates continue their step,
+   * "Item 1" becomes "Item 2", anything else repeats. One undo step; the range grows over the filled cells.
+   * @param direction where to fill
+   * @param count rows (up / down) or columns (left / right) to fill
+   * @return cells written
+   */
+  fill(direction, count) {
+    const b = this._rangeBounds();
+    const target = this._fillBounds(direction, count);
+    if (!b || !target || !this._active) return 0;
+    const rows = this._view;
+    const columns = this.visibleColumns;
+    const vertical = direction === "down" || direction === "up";
+    const forward = direction === "down" || direction === "right";
+    let written = 0;
+    this.batch(() => {
+      const lines = vertical ? [b.c1, b.c2] : [b.r1, b.r2];
+      for (let line = lines[0]; line <= lines[1]; line++) {
+        const cells = [];
+        if (vertical) for (let r = b.r1; r <= b.r2; r++) cells.push([r, line]);
+        else for (let c = b.c1; c <= b.c2; c++) cells.push([line, c]);
+        const source = cells.map(([r, c]) => this.getRow(rows[r]._id)[columns[c].field]);
+        const size = vertical ? target.r2 - target.r1 + 1 : target.c2 - target.c1 + 1;
+        const type = vertical ? columns[line].type : "text";
+        const values = forward ? fillSeries(source, size, type) : fillSeriesBackward(source, size, type);
+        for (let i = 0; i < size; i++) {
+          const r = vertical ? target.r1 + i : line;
+          const c = vertical ? line : target.c1 + i;
+          if (this._fillCell(rows[r]._id, columns[c].field, values[i])) written++;
+        }
+      }
+    }, "fill");
+    const corner = forward ? { id: rows[vertical ? target.r2 : b.r2]._id, field: columns[vertical ? b.c2 : target.c2].field } : { id: rows[vertical ? target.r1 : b.r1]._id, field: columns[vertical ? b.c1 : target.c1].field };
+    const anchor = forward ? { id: rows[b.r1]._id, field: columns[b.c1].field } : { id: rows[b.r2]._id, field: columns[b.c2].field };
+    this.setRange(anchor, corner);
+    this.emit("fill", { direction, count, written, range: this.getRange() });
+    return written;
+  }
+  /** Writes one filled value when the cell is editable and the value fits the column type. */
+  _fillCell(id, field, value) {
+    const column = this.getColumn(field);
+    const data = this.store.get(id);
+    if (!this._isEditable(column, data)) return false;
+    if (typeof value !== "string" && value !== null && value !== void 0 && column && column.type === "text") value = String(value);
+    return this.setCellValue(id, field, value ?? null, { source: "fill" }).ok;
+  }
+  /* ---------------------------------------------------------------- find / replace / go to */
+  /** The active cell, or null. */
+  getActiveCell() {
+    return this._active ? { ...this._active } : null;
+  }
+  /** Moves keyboard focus to the grid. */
+  focus() {
+    this._scroller.focus({ preventScroll: true });
+  }
+  /** Opens the find / replace / go to bar (Ctrl+F, Ctrl+H, Ctrl+G). */
+  openFind(mode2 = "find") {
+    this._findBar?.open(mode2);
+  }
+  closeFind() {
+    this._findBar?.close();
+  }
+  /** Position of a cell in reading order (row by row), for comparing cells; -1 when not in the view. */
+  indexOfCell(cell) {
+    if (!cell) return -1;
+    const r = this._viewIndex.get(cell.id);
+    const c = this.visibleColumns.findIndex((column) => column.field === cell.field);
+    return r === void 0 || c === -1 ? -1 : r * this.visibleColumns.length + c;
+  }
+  _matcher(text, { matchCase = false, wholeCell = false }) {
+    const needle = matchCase ? text : text.toLocaleLowerCase(this.locale);
+    return (value) => {
+      const hay = matchCase ? value : value.toLocaleLowerCase(this.locale);
+      return wholeCell ? hay === needle : hay.includes(needle);
+    };
+  }
+  /**
+   * Cells whose displayed text contains the text, in reading order over the filtered and sorted view.
+   * @return matching cells
+   */
+  find(text, options = {}) {
+    if (!text) return [];
+    const matches = this._matcher(text, options);
+    const columns = this.visibleColumns.filter((c) => !options.fields || options.fields.includes(c.field));
+    const result = [];
+    for (const data of this._view) {
+      const row = this._publicRow(data);
+      for (const column of columns) {
+        if (matches(formatCell(row[column.field], column, row, this.locale))) result.push({ id: data._id, field: column.field });
+      }
+    }
+    return result;
+  }
+  /**
+   * Replaces the text in the editable matching cells (in what you would type in the cell),
+   * as one undo step.
+   * @return cells changed
+   */
+  replace(text, replacement, options = {}) {
+    if (!text) return 0;
+    const cells = options.cells ?? this.find(text, options);
+    const pattern = new RegExp(escapeRegex(text), options.matchCase ? "g" : "gi");
+    let replaced = 0;
+    this.batch(() => {
+      for (const { id, field } of cells) {
+        const column = this.getColumn(field);
+        const data = this.store.get(id);
+        if (!column || !this._isEditable(column, data)) continue;
+        const current = editorText(this._publicRow(data)[field], column, this.locale);
+        const next = options.wholeCell ? this._matcher(text, options)(current) ? replacement : current : current.replace(pattern, () => replacement);
+        if (next !== current && this.setCellValue(id, field, next, { source: "edit" }).ok) replaced++;
+      }
+    }, "replace");
+    this.emit("replace", { text, replacement, replaced });
+    return replaced;
+  }
+  /**
+   * Goes to a row of the view (1 based) and optionally a column, by title or field.
+   * @param target a row number, or text such as "120 Price"
+   * @return whether the cell exists
+   */
+  goTo(target, field) {
+    let row = typeof target === "number" ? target : NaN;
+    if (typeof target === "string") {
+      const match = /^\s*(\d+)\s*[,;:]?\s*(.*?)\s*$/.exec(target);
+      if (!match) return false;
+      row = Number(match[1]);
+      field = field ?? (match[2] || void 0);
+    }
+    const data = this._view[row - 1];
+    if (!data) return false;
+    const columns = this.visibleColumns;
+    const lower = field?.toLocaleLowerCase(this.locale);
+    const column = field === void 0 ? columns.find((c) => c.field === this._active?.field) ?? columns[0] : columns.find((c) => c.field === field || c.field.toLocaleLowerCase(this.locale) === lower || c.title.toLocaleLowerCase(this.locale) === lower);
+    if (!column) return false;
+    this.setRange({ id: data._id, field: column.field });
+    this.focus();
+    return true;
+  }
+  /** Marks cells (find matches); an empty list removes the marks. */
+  highlightCells(cells) {
+    this._highlighted = new Set(cells.map((c) => `${c.id}\0${c.field}`));
+    this._paintRange();
+  }
+  _move(rowDelta, columnDelta, extend = false) {
+    const columns = this.visibleColumns;
+    const active = extend ? this._focus ?? this._active : this._active;
     if (!active) {
       const first = this._view[0];
       if (first && columns[0]) this._setActive(first._id, columns[0].field);
       return;
     }
-    let rowIndex = this._view.findIndex((r) => r._id === active.id);
-    let columnIndex = columns.findIndex((c) => c.field === active.field);
-    columnIndex += columnDelta;
-    if (columnIndex >= columns.length) {
-      columnIndex = 0;
+    let rowIndex = this._viewIndex.get(active.id) ?? 0;
+    let columnIndex2 = columns.findIndex((c) => c.field === active.field);
+    columnIndex2 += columnDelta;
+    if (Math.abs(columnDelta) > 1 || extend) {
+      columnIndex2 = Math.max(0, Math.min(columns.length - 1, columnIndex2));
+    } else if (columnIndex2 >= columns.length) {
+      columnIndex2 = 0;
       rowIndex++;
-    } else if (columnIndex < 0) {
-      columnIndex = columns.length - 1;
+    } else if (columnIndex2 < 0) {
+      columnIndex2 = columns.length - 1;
       rowIndex--;
     }
-    rowIndex = Math.max(0, Math.min(this._view.length - 1, rowIndex + rowDelta));
-    if (rowIndex >= this._rendered) this._renderRows(rowIndex + this.options.renderChunk);
+    rowIndex = this._visibleRow(Math.max(0, Math.min(this._view.length - 1, rowIndex + rowDelta)), rowDelta < 0 ? -1 : 1);
+    columnIndex2 = Math.max(0, Math.min(columns.length - 1, columnIndex2));
     const row = this._view[rowIndex];
-    const column = columns[columnIndex];
-    if (row && column) this._setActive(row._id, column.field);
+    const column = columns[columnIndex2];
+    if (row && column) this._selectCell(row._id, column.field, extend);
   }
   _onKeyDown(e) {
     if (this._editing || targetOf(e)?.closest(".ig-popover") || e.target !== this._scroller) return;
@@ -5230,8 +7390,9 @@ var IntelligentGrid = class {
     const move = moves[e.key];
     if (move) {
       e.preventDefault();
-      this._move(...move);
-      if (e.shiftKey && this._active && this.selectionMode === "multiple") this._clickSelect(this._active.id, { shiftKey: true });
+      const [rows, cols] = move;
+      const far = e.ctrlKey || e.metaKey ? Number.MAX_SAFE_INTEGER : 1;
+      this._move(rows * far, cols * far, e.shiftKey);
       return;
     }
     if (e.key === "Tab" && active) {
@@ -5239,9 +7400,40 @@ var IntelligentGrid = class {
       this._move(0, e.shiftKey ? -1 : 1);
       return;
     }
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a" && this.selectionMode === "multiple") {
+    if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === "z" || e.key.toLowerCase() === "y")) {
       e.preventDefault();
-      this.selectAll();
+      const redo = e.key.toLowerCase() === "y" || e.shiftKey;
+      if (redo) this.redo();
+      else this.undo();
+      return;
+    }
+    if (e.key === "F2" && e.shiftKey && this._active) {
+      e.preventDefault();
+      this.editComment(this._active.id, this._active.field);
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && this._findBar && !e.shiftKey && !e.altKey && ["f", "h", "g"].includes(e.key.toLowerCase())) {
+      e.preventDefault();
+      this.openFind({ f: "find", h: "replace", g: "goto" }[e.key.toLowerCase()]);
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === "d" || e.key.toLowerCase() === "r") && !e.shiftKey && !e.altKey) {
+      e.preventDefault();
+      this.fillCopy(e.key.toLowerCase() === "d" ? "down" : "right");
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
+      e.preventDefault();
+      const columns = this.visibleColumns;
+      const first = this._view[0];
+      const last = this._view.at(-1);
+      if (first && last && columns.length) {
+        this._active = { id: first._id, field: columns[0].field };
+        this._focus = { id: last._id, field: columns.at(-1).field };
+        this._paintRange();
+        this.emit("rangeChange", this.getRange());
+      }
+      if (this.selectionMode === "multiple") this.selectAll();
       return;
     }
     if (!active) return;
@@ -5250,13 +7442,12 @@ var IntelligentGrid = class {
       this.startEdit(active.id, active.field);
     } else if (e.key === " " && this.selectionMode !== "none") {
       e.preventDefault();
-      this._clickSelect(active.id, { ctrlKey: true, target: e.target });
+      const range = this.getRange();
+      if (range && range.rows.length > 1 && this.selectionMode === "multiple") this.select(range.rows, { append: true });
+      else this._clickSelect(active.id, { ctrlKey: true, target: e.target });
     } else if (e.key === "Delete" || e.key === "Backspace") {
-      const column = this.getColumn(active.field);
-      if (this._isEditable(column, this.store.get(active.id))) {
-        e.preventDefault();
-        this.setCellValue(active.id, active.field, null, { source: "edit" });
-      }
+      e.preventDefault();
+      this.clearRange();
     } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
       if (this.startEdit(active.id, active.field, e.key)) e.preventDefault();
     }
@@ -5365,7 +7556,7 @@ var IntelligentGrid = class {
     if (row && td.isConnected) {
       const fresh = this.store.get(id) ?? row;
       this._view[index] = { ...fresh };
-      td.parentElement?.replaceWith(this._createRow(this._view[index]));
+      this._replaceRow(id);
     }
     return true;
   }
@@ -5373,8 +7564,13 @@ var IntelligentGrid = class {
   _onCopy(e) {
     if (this._editing) return;
     const columns = this.visibleColumns;
+    const range = this.getRange();
     let text;
-    if (this._selected.size > 1 || this._selected.size && !this._active) {
+    if (range && (range.rows.length > 1 || range.fields.length > 1)) {
+      const rows = range.rows.map((id) => this.store.get(id));
+      const rangeColumns = range.fields.map((field) => this.getColumn(field));
+      text = toCSV(rows, rangeColumns, { delimiter: "	", header: false, sanitize: false, formatted: true, lineBreak: "\n", format: (v, c, r) => formatCell(v, c, r, this.locale) });
+    } else if (this._selected.size > 1 || this._selected.size && !this._active) {
       const rows = this._view.filter((r) => this._selected.has(r._id));
       text = toCSV(rows, columns, { delimiter: "	", header: false, sanitize: false, formatted: true, lineBreak: "\n", format: (v, c, r) => formatCell(v, c, r, this.locale) });
     } else if (this._active) {
@@ -5398,11 +7594,17 @@ var IntelligentGrid = class {
     const text = e.clipboardData?.getData("text/plain");
     if (!text) return;
     e.preventDefault();
-    const lines = text.replace(/\r\n?/g, "\n").replace(/\n$/, "").split("\n").map((line) => line.split("	"));
+    const lines = parseDelimited(text, "	");
     const columns = this.visibleColumns;
-    const startRow = this._view.findIndex((r) => r._id === active.id);
-    const startColumn = columns.findIndex((c) => c.field === active.field);
+    const bounds = this._rangeBounds();
+    const startRow = bounds ? bounds.r1 : this._viewIndex.get(active.id) ?? 0;
+    const startColumn = bounds ? bounds.c1 : columns.findIndex((c) => c.field === active.field);
+    if (bounds && lines.length === 1 && lines[0].length === 1 && (bounds.r1 !== bounds.r2 || bounds.c1 !== bounds.c2)) {
+      const value = lines[0][0];
+      lines.splice(0, 1, ...Array.from({ length: bounds.r2 - bounds.r1 + 1 }, () => Array.from({ length: bounds.c2 - bounds.c1 + 1 }, () => value)));
+    }
     const results = [];
+    this._undo.begin("paste");
     lines.forEach((cells, r) => {
       const row = this._view[startRow + r];
       if (!row) return;
@@ -5412,14 +7614,18 @@ var IntelligentGrid = class {
         results.push({ id: row._id, field: column.field, ...this.setCellValue(row._id, column.field, value, { source: "paste" }) });
       });
     });
+    this._undo.end();
+    this._renderNavbar();
     this.emit("paste", { text, results });
   }
   /* ---------------------------------------------------------------- lifecycle */
   destroy() {
-    this._observer?.disconnect();
+    if (this._scrollFrame) cancelAnimationFrame(this._scrollFrame);
+    clearTimeout(this._noticeTimer);
     if (this._onDocumentPointer) document.removeEventListener("pointerdown", this._onDocumentPointer);
     this.closePopover();
     this.root.remove();
+    this.element.classList.remove("ig-host");
     this.store.clear();
     this.emit("destroy", {});
     this.events = new Emitter(this);

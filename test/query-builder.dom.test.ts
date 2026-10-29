@@ -127,12 +127,14 @@ test('NOT, removing rules and groups', () => {
     assert.equal(grid.getQuery(), null, 'an empty query clears the advanced filter');
 });
 
-test('text rules are flagged as grid side and explained', () => {
+test('text rules go into the find() JSON as case insensitive $regex', () => {
     const grid = create();
     grid.toggleQueryBuilder(true);
     change(panel(grid).querySelectorAll<HTMLSelectElement>('.ig-qb-rule select')[1]!, 'contains');
-    assert.ok(panel(grid).querySelector('.ig-qb-badge'));
-    assert.equal(panel(grid).querySelector<HTMLElement>('.ig-qb-note')!.hidden, false);
+    change(panel(grid).querySelector<HTMLInputElement>('.ig-qb-rule input')!, 'ar');
+    assert.deepEqual(JSON.parse(panel(grid).querySelector('.ig-qb-json')!.textContent!), { name: { $regex: 'ar', $options: 'i' } });
+    click(buttonByText(panel(grid), 'Apply'));
+    assert.deepEqual(names(grid), ['Carla']);
 });
 
 test('events and append mode receive the query', async () => {
