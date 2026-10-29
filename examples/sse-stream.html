@@ -50,6 +50,14 @@
     let stream = null;
     document.querySelector('#start').onclick = () => {
         const started = performance.now();
+        try {
+            start(started);
+        } catch (error) {
+            // for example an old sorla-db: loadStream needs 1.7.1 or later
+            log('error', error.message);
+        }
+    };
+    const start = started => {
         stream = grid.loadStream('/api/orders/stream', {
             onProgress: ({ loaded, total, blocks }) => {
                 document.querySelector('#progress').value = total ? loaded / total : 0;

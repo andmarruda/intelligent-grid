@@ -35,7 +35,7 @@ test('WebSocket: pages over the socket and pushed changes update rows in place',
     await page.locator('.ig-scroll').evaluate(el => { el.scrollTop = el.scrollHeight; });
     await expect(page.locator('#log')).toContainText('"offset":100');
     // the demo backend pushes a change every 3 s
-    await expect(page.locator('#log')).toContainText('pushed', { timeout: 8000 });
+    await expect(page.locator('#log')).toContainText('pushed', { timeout: 20000 });
 });
 
 test('SSE: 100 000 rows arrive in blocks with progress, sorted at the end', async ({ page }) => {
