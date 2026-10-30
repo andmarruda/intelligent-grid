@@ -3115,6 +3115,8 @@ var CalcEngine = class {
   names;
   functions;
   fields = /* @__PURE__ */ new Set();
+  // date columns hold ISO text; in ranges they are serial numbers, like Excel dates (MIN([due]), SUMIFS)
+  dateFields = /* @__PURE__ */ new Set();
   columnFormulas = /* @__PURE__ */ new Map();
   cellFormulas = /* @__PURE__ */ new Map();
   nodes = /* @__PURE__ */ new Map();
@@ -3132,6 +3134,7 @@ var CalcEngine = class {
   setColumns(columns) {
     this.invalidate();
     this.fields = new Set(columns.map((c) => c.field));
+    this.dateFields = new Set(columns.filter((c) => c.type === "date" || c.type === "datetime").map((c) => c.field));
     this.columnFormulas.clear();
     for (const column of columns) {
       if (typeof column.formula === "string" && column.formula.trim()) {
@@ -3162,10 +3165,14 @@ var CalcEngine = class {
       }
     };
   }
+  /** A value of a column range: dates of date columns become serial numbers, like Excel dates. */
+  rangeValue(field, value) {
+    return this.dateFields.has(field) && typeof value === "string" && isISODate(value) ? toSerial(value) : fromCell(value);
+  }
   allValues = (field) => {
     let values = this.columnCache.get(field);
     if (!values) {
-      values = this.store.values(field).map(fromCell);
+      values = this.store.values(field).map((value) => this.rangeValue(field, value));
       this.columnCache.set(field, values);
     }
     return values;
@@ -3313,7 +3320,7 @@ var CalcEngine = class {
     const columnValues = rows ? (field) => {
       let values = cache2.get(field);
       if (!values) {
-        values = rows.map((r) => fromCell(r[field]));
+        values = rows.map((r) => this.rangeValue(field, r[field]));
         cache2.set(field, values);
       }
       return values;

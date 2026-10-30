@@ -12,6 +12,7 @@ export declare class CalcEngine {
     names: Record<string, unknown>;
     functions: Map<string, FunctionDefinition>;
     fields: Set<string>;
+    private dateFields;
     columnFormulas: Map<string, string>;
     cellFormulas: Map<string, Record<string, string>>;
     nodes: Map<string, DependencyNode>;
@@ -27,6 +28,8 @@ export declare class CalcEngine {
     });
     setColumns(columns: Column[]): void;
     private context;
+    /** A value of a column range: dates of date columns become serial numbers, like Excel dates. */
+    private rangeValue;
     private allValues;
     /**
      * Formula fields and their dependencies, topologically ordered; cycles become #CIRC!.

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Sorla } from './helpers.ts';
+import { Sorla, setupDom } from './helpers.ts';
 import { SorlaStore } from '../src/core/store.ts';
 import { CalcEngine } from '../src/formula/engine.ts';
 import { normalizeColumn, excelFormatCode } from '../src/core/columns.ts';
@@ -147,4 +147,19 @@ test('row independent subexpressions are computed once per column, not once per 
     calc.recalculate([ids[0]], ['v']);
     assert.equal(store.get(ids[1])!.share, 2 / (total * 2 - 1));
     assert.equal(calc.evaluate('=SUM([v])'), total * 2 - 1);
+});
+
+test('date columns are serial numbers in ranges: MIN, MAX, COUNTIF and SUMIFS work on them', async () => {
+    const { IntelligentGrid } = await setupDom();
+    document.body.innerHTML = '<div id="dates"></div>';
+    const grid = new IntelligentGrid('#dates', {
+        sorla: Sorla, locale: 'en-US',
+        columns: [{ field: 'due', type: 'date', footer: '=TEXT(MAX([due]),"yyyy-mm-dd")' }, { field: 'n', type: 'integer' }],
+        data: [{ due: '2026-01-09', n: 1 }, { due: '2026-10-13', n: 2 }, { due: null, n: 3 }]
+    });
+    assert.equal(grid.evaluate('=TEXT(MIN([due]),"yyyy-mm-dd")'), '2026-01-09');
+    assert.equal(grid.evaluate('=COUNTIF([due],">"&DATE(2026,6,1))'), 1);
+    assert.equal(grid.evaluate('=SUMIFS([n],[due],"<2026-06-01")'), 1);
+    assert.equal(grid.evaluate('=COUNTA([due])'), 2);
+    assert.equal(grid.root.querySelector('tfoot td[data-field="due"]')!.textContent, '10/13/2026', 'formatted like the column');
 });

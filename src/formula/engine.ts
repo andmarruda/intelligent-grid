@@ -14,6 +14,7 @@ import type { AstNode } from './parser.ts';
 import { collectDependencies } from './parser.ts';
 import { ERRORS, err, isError } from './errors.ts';
 import { fromCell } from './values.ts';
+import { isISODate, toSerial } from './dates.ts';
 import type { FormulaValue, Scalar } from './values.ts';
 import { localeSeparators } from './numfmt.ts';
 import type { FunctionDefinition } from './functions.ts';
@@ -33,6 +34,8 @@ export class CalcEngine {
     names: Record<string, unknown>;
     functions: Map<string, FunctionDefinition>;
     fields = new Set<string>();
+    // date columns hold ISO text; in ranges they are serial numbers, like Excel dates (MIN([due]), SUMIFS)
+    private dateFields = new Set<string>();
     columnFormulas = new Map<string, string>();
     cellFormulas = new Map<string, Record<string, string>>();
     nodes = new Map<string, DependencyNode>();
@@ -57,6 +60,7 @@ export class CalcEngine {
     setColumns(columns: Column[]): void {
         this.invalidate();
         this.fields = new Set(columns.map(c => c.field));
+        this.dateFields = new Set(columns.filter(c => c.type === 'date' || c.type === 'datetime').map(c => c.field));
         this.columnFormulas.clear();
         for (const column of columns) {
             if (typeof column.formula === 'string' && column.formula.trim()) {
@@ -89,10 +93,15 @@ export class CalcEngine {
         };
     }
 
+    /** A value of a column range: dates of date columns become serial numbers, like Excel dates. */
+    private rangeValue(field: string, value: unknown): FormulaValue {
+        return this.dateFields.has(field) && typeof value === 'string' && isISODate(value) ? toSerial(value)! : fromCell(value);
+    }
+
     private allValues = (field: string): FormulaValue[] => {
         let values = this.columnCache.get(field);
         if (!values) {
-            values = this.store.values(field).map(fromCell);
+            values = this.store.values(field).map(value => this.rangeValue(field, value));
             this.columnCache.set(field, values);
         }
         return values;
@@ -263,7 +272,7 @@ export class CalcEngine {
             ? (field: string) => {
                 let values = cache.get(field);
                 if (!values) {
-                    values = rows.map(r => fromCell(r[field]));
+                    values = rows.map(r => this.rangeValue(field, r[field]));
                     cache.set(field, values);
                 }
                 return values;
