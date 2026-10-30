@@ -69,14 +69,19 @@ export class QueryBuilder {
     }
 
     open(): void {
+        this.reload();
+        this.element.hidden = false;
+        this.element.querySelector<HTMLElement>('select, input, button')?.focus();
+        this.grid.emit('queryBuilderOpen', {});
+    }
+
+    /** Starts the draft again from the applied query (also when the query changes while the panel is open). */
+    reload(): void {
         const current = this.grid.getQuery();
         this.draft = current
             ? (current.type === 'group' ? structuredClone(current) : { ...emptyGroup(), children: [structuredClone(current)] })
             : { ...emptyGroup(), children: [this.newRule()] };
-        this.element.hidden = false;
         this.render();
-        this.element.querySelector<HTMLElement>('select, input, button')?.focus();
-        this.grid.emit('queryBuilderOpen', {});
     }
 
     close(): void {

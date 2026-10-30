@@ -11,7 +11,7 @@ import { UndoStack } from '../core/undo.ts';
 import { fillSeries, fillSeriesBackward } from '../core/fill.ts';
 import { parseDelimited } from '../import/delimited.ts';
 import { readXlsx } from '../import/xlsx-read.ts';
-import { colorScaleColors, columnStats, iconFor, isPreset, ratio, scaleColor } from '../core/presets.ts';
+import { colorScaleColors, columnStats, iconFor, isPreset, ratio, readableText, scaleColor } from '../core/presets.ts';
 import type { ColumnStats } from '../core/presets.ts';
 import type { CellState, UndoChange, UndoStep } from '../core/undo.ts';
 import type { ChangeReaders, ChangeSet, ChangeSummary, FieldChange, HistoryEntry } from '../core/changes.ts';
@@ -1015,6 +1015,8 @@ export class IntelligentGrid {
      */
     setQuery(query: QueryNode | null): void {
         this._queryModel = normalizeQuery(query);
+        // an open builder shows the query that is now applied
+        if (this._queryBuilder?.isOpen) this._queryBuilder.reload();
         this._renderNavbar();
         this._onQueryChange();
         this.emit('queryChange', { query: this.getQuery(), sorlaQuery: this.toSorlaQuery() });
@@ -1977,7 +1979,11 @@ export class IntelligentGrid {
             td.style.setProperty('--ig-bar', `${(ratio(value, low, high) * 100).toFixed(1)}%`);
             if (format.color) td.style.setProperty('--ig-bar-color', format.color);
         } else if (format.type === 'colorScale') {
-            td.style.backgroundColor = scaleColor(colorScaleColors(format), ratio(value, format.min ?? stats.min, format.max ?? stats.max));
+            const background = scaleColor(colorScaleColors(format), ratio(value, format.min ?? stats.min, format.max ?? stats.max));
+            td.style.backgroundColor = background;
+            // the text color of the theme may not read on the scale color (light text in dark mode)
+            const text = readableText(background);
+            if (text) td.style.color = text;
         } else {
             const { icon, tone } = iconFor(format, value, stats);
             const mark = h('i', { class: `ig-cf-icon ig-cf-icon-${tone}`, 'aria-hidden': 'true', text: icon });

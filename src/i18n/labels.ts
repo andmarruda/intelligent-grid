@@ -206,11 +206,14 @@ const LOCALES: Record<string, Record<string, string>> = { en, pt: ptBR, 'pt-BR':
 export function createTranslator(locale: string, overrides: Record<string, string> = {}): Translator {
     const base = LOCALES[locale] ?? LOCALES[locale.split('-')[0]!] ?? en;
     const labels = { ...en, ...base, ...overrides };
+    // counts in messages follow the locale: "100,000 rows" in en-US, "100.000 linhas" in pt-BR
+    const numbers = new Intl.NumberFormat(locale);
+    const show = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? numbers.format(value) : String(value);
     return (key, params = {}) => {
         // validation messages arrive as "min:5"
         const [name = '', arg] = String(key).split(':');
         const template = labels[key] ?? (arg !== undefined ? labels[name] : undefined);
         if (template === undefined) return String(key);
-        return template.replace(/\{(\w+)\}/g, (m: string, p: string) => p === '0' && arg !== undefined ? arg : String(params[p] ?? m));
+        return template.replace(/\{(\w+)\}/g, (m: string, p: string) => p === '0' && arg !== undefined ? arg : params[p] === undefined ? m : show(params[p]));
     };
 }

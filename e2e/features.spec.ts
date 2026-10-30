@@ -89,3 +89,18 @@ test('group rows collapse on click and keep the body virtualized', async ({ page
     await expect(page.locator('tbody tr.ig-group-row').nth(1)).toContainText('qty: 1 (50)');
     expect(await page.evaluate(() => window.ig.getGroups()[0]!.collapsed)).toBe(true);
 });
+
+test('find highlights show on zebra rows too; group labels are readable in a narrow first column', async ({ page }) => {
+    await page.evaluate(() => window.make({ data: window.rows(50), columns: [{ field: 'id', type: 'integer', width: 60 }, { field: 'name' }, { field: 'qty', title: 'Quantity in stock', type: 'integer' }] }));
+    await page.evaluate(() => window.ig.highlightCells([{ id: '1', field: 'name' }, { id: '2', field: 'name' }]));
+    const colors = await page.locator('td.ig-find-match').evaluateAll(cells => cells.map(td => getComputedStyle(td).backgroundColor));
+    expect(colors.length).toBe(2);
+    expect(colors[0]).toBe(colors[1]);
+
+    await page.evaluate(() => window.ig.setGroupBy(['qty']));
+    const label = page.locator('tr.ig-group-row td.ig-group-label').first();
+    const box = (await label.boundingBox())!;
+    const title = (await label.locator('.ig-group-title').boundingBox())!;
+    expect(title.width).toBeGreaterThan(box.width);   // runs over the next cells instead of being cut
+    await expect(label).toContainText('Quantity in stock: 0');
+});

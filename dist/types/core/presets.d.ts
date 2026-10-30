@@ -23,6 +23,11 @@ export declare function ratio(value: number, low: number, high: number): number;
  * @return rgb() color, or the nearest stop as given when a color is not hex
  */
 export declare function scaleColor(colors: string[], t: number): string;
+/**
+ * Dark or light text, whichever reads better on a background color (hex or rgb()).
+ * @return '#1f2328' or '#ffffff', or null when the color cannot be read
+ */
+export declare function readableText(background: string): string | null;
 export declare const colorScaleColors: (format: ColorScaleFormat) => string[];
 /**
  * Icon of an icon set for a position. Thresholds are percents of the range (default equal parts),

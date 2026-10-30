@@ -65,6 +65,21 @@ export function scaleColor(colors: string[], t: number): string {
     return `rgb(${mix.join(', ')})`;
 }
 
+/**
+ * Dark or light text, whichever reads better on a background color (hex or rgb()).
+ * @return '#1f2328' or '#ffffff', or null when the color cannot be read
+ */
+export function readableText(background: string): string | null {
+    const rgb = /^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/.exec(background)?.slice(1).map(Number) ?? parseHex(background);
+    if (!rgb) return null;
+    // relative luminance (WCAG)
+    const [r, g, b] = rgb.map(channel => {
+        const c = channel / 255;
+        return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    }) as [number, number, number];
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.4 ? '#1f2328' : '#ffffff';
+}
+
 export const colorScaleColors = (format: ColorScaleFormat): string[] =>
     format.colors && format.colors.length ? format.colors : DEFAULT_COLORS;
 

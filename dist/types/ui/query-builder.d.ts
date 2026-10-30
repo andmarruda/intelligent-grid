@@ -10,6 +10,8 @@ export declare class QueryBuilder {
     constructor(grid: IntelligentGrid);
     get isOpen(): boolean;
     open(): void;
+    /** Starts the draft again from the applied query (also when the query changes while the panel is open). */
+    reload(): void;
     close(): void;
     toggle(): void;
     private apply;

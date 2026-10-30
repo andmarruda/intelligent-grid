@@ -131,7 +131,8 @@
 .ig-find-option { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; white-space: nowrap; }
 .ig-find-count { font-size: 12px; color: var(--ig-muted); min-width: 64px; }
 .ig-find-close { margin-left: auto; }
-.ig-cell.ig-find-match { background-color: var(--ig-find-bg); }
+/* above the zebra, hover and selected row colors */
+.ig-table td.ig-cell.ig-find-match { background-color: var(--ig-find-bg); }
 
 .ig-qb {
     display: grid;
@@ -255,7 +256,9 @@
 
 /* group rows */
 .ig-group-row td { background: var(--ig-header-bg); font-weight: 600; cursor: pointer; border-bottom: 1px solid var(--ig-border); }
-.ig-group-row td.ig-group-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* the label may run over the empty cells next to it (the first column is often narrow) */
+.ig-group-row td.ig-group-label { white-space: nowrap; overflow: visible; z-index: 3; }
+.ig-group-label .ig-group-title, .ig-group-label .ig-group-count { background: var(--ig-header-bg); }
 .ig-group-toggle { border: 0; background: none; color: inherit; font: inherit; width: 18px; padding: 0; cursor: pointer; }
 .ig-group-count { color: var(--ig-muted); font-weight: 400; }
 .ig-group-level-1 td.ig-group-label { font-weight: 500; }

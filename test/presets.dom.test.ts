@@ -1,7 +1,8 @@
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { Sorla, setupDom } from './helpers.ts';
-import { columnStats, iconFor, ratio, scaleColor } from '../src/core/presets.ts';
+import { columnStats, iconFor, ratio, readableText, scaleColor } from '../src/core/presets.ts';
+import { createTranslator } from '../src/i18n/labels.ts';
 import type { ColumnDefinition, GridOptions } from '../src/types.ts';
 import type { IntelligentGrid as IntelligentGridType } from '../src/ui/grid.ts';
 
@@ -67,4 +68,17 @@ test('presets combine with rules', () => {
     assert.ok(cell(grid, '3').classList.contains('hot'));
     assert.equal(cell(grid, '3').style.getPropertyValue('--ig-bar-color'), 'red');
     assert.equal(cell(grid, '1').classList.contains('hot'), false);
+});
+
+test('color scales pick a readable text color; counts in messages follow the locale', () => {
+    assert.equal(readableText('#ffffff'), '#1f2328');
+    assert.equal(readableText('rgb(158, 197, 254)'), '#1f2328');
+    assert.equal(readableText('#1d3557'), '#ffffff');
+    assert.equal(readableText('red'), null);
+    const grid = create({ conditionalFormats: [{ type: 'colorScale', colors: ['#ffffff', '#000000'] }] });
+    assert.equal(cell(grid, '1').style.color, 'rgb(31, 35, 40)');
+    assert.equal(cell(grid, '3').style.color, 'rgb(255, 255, 255)');
+
+    assert.equal(createTranslator('en-US')('status', { shown: 100000, total: 1234567 }), '100,000 of 1,234,567 rows');
+    assert.equal(createTranslator('pt-BR')('streamDone', { loaded: 100000 }), '100.000 linhas carregadas');
 });

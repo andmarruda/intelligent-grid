@@ -160,3 +160,13 @@ test('navbar.query: false hides the button', () => {
     assert.equal(grid.root.querySelector('.ig-query-btn'), null);
     assert.equal(grid.root.querySelector('.ig-qb'), null);
 });
+
+test('setQuery while the builder is open shows the new query in it', () => {
+    const grid = create();
+    grid.toggleQueryBuilder(true);
+    assert.equal(panel(grid).querySelectorAll('.ig-qb-rule').length, 1);
+    grid.setQuery({ type: 'group', join: 'or', children: [{ type: 'rule', field: 'city', op: 'eq', value: 'C' }, { type: 'rule', field: 'age', op: 'lt', value: 30 }] });
+    assert.equal(panel(grid).hidden, false);
+    assert.equal(panel(grid).querySelectorAll('.ig-qb-rule').length, 2);
+    assert.deepEqual(JSON.parse(panel(grid).querySelector('.ig-qb-json')!.textContent!), { $or: [{ city: { $eq: 'C' } }, { age: { $lt: 30, $ne: '' } }] });
+});

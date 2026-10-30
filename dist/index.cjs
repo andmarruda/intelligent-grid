@@ -1487,6 +1487,15 @@ function scaleColor(colors, t) {
   const mix = a.map((channel, i) => Math.round(channel + (b[i] - channel) * local));
   return `rgb(${mix.join(", ")})`;
 }
+function readableText(background) {
+  const rgb = /^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/.exec(background)?.slice(1).map(Number) ?? parseHex(background);
+  if (!rgb) return null;
+  const [r, g, b] = rgb.map((channel) => {
+    const c = channel / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.4 ? "#1f2328" : "#ffffff";
+}
 var colorScaleColors = (format) => format.colors && format.colors.length ? format.colors : DEFAULT_COLORS;
 function iconFor(format, value, stats) {
   const set = Array.isArray(format.icons) ? format.icons.map((icon) => ({ icon, tone: "custom" })) : ICON_SETS[format.icons ?? "arrows"] ?? ICON_SETS.arrows;
@@ -3762,11 +3771,13 @@ var LOCALES = { en, pt: ptBR, "pt-BR": ptBR };
 function createTranslator(locale, overrides = {}) {
   const base = LOCALES[locale] ?? LOCALES[locale.split("-")[0]] ?? en;
   const labels = { ...en, ...base, ...overrides };
+  const numbers2 = new Intl.NumberFormat(locale);
+  const show = (value) => typeof value === "number" && Number.isFinite(value) ? numbers2.format(value) : String(value);
   return (key, params = {}) => {
     const [name = "", arg] = String(key).split(":");
     const template = labels[key] ?? (arg !== void 0 ? labels[name] : void 0);
     if (template === void 0) return String(key);
-    return template.replace(/\{(\w+)\}/g, (m, p) => p === "0" && arg !== void 0 ? arg : String(params[p] ?? m));
+    return template.replace(/\{(\w+)\}/g, (m, p) => p === "0" && arg !== void 0 ? arg : params[p] === void 0 ? m : show(params[p]));
   };
 }
 
@@ -4112,12 +4123,16 @@ var QueryBuilder = class {
     return !this.element.hidden;
   }
   open() {
-    const current = this.grid.getQuery();
-    this.draft = current ? current.type === "group" ? structuredClone(current) : { ...emptyGroup(), children: [structuredClone(current)] } : { ...emptyGroup(), children: [this.newRule()] };
+    this.reload();
     this.element.hidden = false;
-    this.render();
     this.element.querySelector("select, input, button")?.focus();
     this.grid.emit("queryBuilderOpen", {});
+  }
+  /** Starts the draft again from the applied query (also when the query changes while the panel is open). */
+  reload() {
+    const current = this.grid.getQuery();
+    this.draft = current ? current.type === "group" ? structuredClone(current) : { ...emptyGroup(), children: [structuredClone(current)] } : { ...emptyGroup(), children: [this.newRule()] };
+    this.render();
   }
   close() {
     if (!this.isOpen) return;
@@ -5442,6 +5457,7 @@ var IntelligentGrid = class {
    */
   setQuery(query) {
     this._queryModel = normalizeQuery(query);
+    if (this._queryBuilder?.isOpen) this._queryBuilder.reload();
     this._renderNavbar();
     this._onQueryChange();
     this.emit("queryChange", { query: this.getQuery(), sorlaQuery: this.toSorlaQuery() });
@@ -6329,7 +6345,10 @@ var IntelligentGrid = class {
       td.style.setProperty("--ig-bar", `${(ratio(value, low, high) * 100).toFixed(1)}%`);
       if (format.color) td.style.setProperty("--ig-bar-color", format.color);
     } else if (format.type === "colorScale") {
-      td.style.backgroundColor = scaleColor(colorScaleColors(format), ratio(value, format.min ?? stats.min, format.max ?? stats.max));
+      const background = scaleColor(colorScaleColors(format), ratio(value, format.min ?? stats.min, format.max ?? stats.max));
+      td.style.backgroundColor = background;
+      const text = readableText(background);
+      if (text) td.style.color = text;
     } else {
       const { icon, tone } = iconFor(format, value, stats);
       const mark = h("i", { class: `ig-cf-icon ig-cf-icon-${tone}`, "aria-hidden": "true", text: icon });
