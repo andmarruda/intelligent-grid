@@ -1,0 +1,44 @@
+{
+  "title": "Intelligent Grid",
+  "tagline": "The Excel-like data grid for the browser: 100 000 rows at 60 fps, formulas, ranges, undo, grouping, import and export.",
+  "icon": "▦",
+  "site": "https://andmarruda.github.io/intelligent-grid/",
+  "repo": "https://github.com/andmarruda/intelligent-grid",
+  "branch": "main",
+  "install": "npm install @andmarruda/intelligent-grid sorla-db",
+  "footer": "MIT © Anderson Arruda",
+  "hero": {
+    "image": "docs/assets/spreadsheet.png",
+    "alt": "Intelligent Grid with data bars, color scales, icon sets, sparklines and a pinned column",
+    "buttons": [{ "label": "Live examples", "href": "examples/index.html" }]
+  },
+  "highlights": [
+    { "title": "Huge data, smooth scroll", "text": "Row and column virtualization: 100 000 rows open in under half a second and scroll at 60 fps." },
+    { "title": "Feels like a spreadsheet", "text": "Ranges, copy and paste with Excel, fill handle series, undo and redo, find and replace, comments." },
+    { "title": "137 Excel functions", "text": "Calculated columns, cell formulas, footers and structured references like =[@qty]*[@price]." },
+    { "title": "Filters people understand", "text": "Excel AutoFilter, search, and a visual query builder that writes MongoDB-style JSON." },
+    { "title": "Group and analyze", "text": "Collapsible groups with subtotals, data bars, color scales, icon sets and sparklines." },
+    { "title": "Real import and export", "text": "CSV and XLSX in both directions, without dependencies, formulas kept as Excel formulas." },
+    { "title": "Live server data", "text": "Infinite scroll over fetch or WebSocket, and Server-Sent Events loading 100 000 rows in blocks." },
+    { "title": "Forms-ready change tracking", "text": "Inserted, updated and deleted rows as JSON, history, accept and discard." },
+    { "title": "Typed, themable, translated", "text": "TypeScript, CSS variables with dark mode, English and Portuguese out of the box." }
+  ],
+  "languages": [
+    {
+      "code": "en", "label": "English", "docsLabel": "Documentation", "dir": "docs", "index": "README.md",
+      "home": "Overview", "onThisPage": "On this page", "previous": "Previous", "next": "Next", "filter": "Filter pages",
+      "edit": "Edit this page on GitHub",
+      "links": [{ "label": "Examples", "href": "examples/index.html" }]
+    },
+    {
+      "code": "pt-BR", "label": "Português (Brasil)", "docsLabel": "Documentação em português", "dir": "docs/pt-BR", "index": "README.md",
+      "tagline": "A grade de dados estilo Excel para o navegador: 100 000 linhas a 60 fps, fórmulas, intervalos, desfazer, grupos, importação e exportação.",
+      "home": "Visão geral", "onThisPage": "Nesta página", "previous": "Anterior", "next": "Próxima", "filter": "Filtrar páginas",
+      "edit": "Editar esta página no GitHub",
+      "links": [{ "label": "Exemplos", "href": "examples/index.html" }]
+    }
+  ],
+  "copy": ["examples", "dist", "node_modules/sorla-db/dist/sorla.min.js"],
+  "backendPages": ["examples/fetch-pages.html", "examples/websocket.html", "examples/sse-stream.html"],
+  "backendNote": "This example talks to the demo backend, which GitHub Pages cannot run. Clone the repository and run <code>npm install &amp;&amp; npm run demo</code> to try it. · Este exemplo usa o backend de demonstração, que o GitHub Pages não executa: clone o repositório e rode <code>npm install &amp;&amp; npm run demo</code>."
+}
