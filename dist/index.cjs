@@ -3868,14 +3868,24 @@ function openFilterMenu(grid, column, anchor) {
       value2.hidden = op.value !== "between";
     };
     op.addEventListener("change", sync);
+    const fallback = column.type === "boolean" ? null : operators.includes("contains") ? "contains" : "eq";
+    value.addEventListener("input", () => {
+      if (!op.value && fallback && value.value.trim() !== "") {
+        op.value = fallback;
+        sync();
+      }
+    });
     sync();
     return {
       element: h("div", { class: "ig-condition" }, op, value, value2),
-      read: () => op.value ? {
-        op: op.value,
-        value: column.type === "boolean" ? value.value === "true" : value.value,
-        value2: value2.value
-      } : null
+      read: () => {
+        const chosen = op.value || (fallback && value.value.trim() !== "" ? fallback : "");
+        return chosen ? {
+          op: chosen,
+          value: column.type === "boolean" ? value.value === "true" : value.value,
+          value2: value2.value
+        } : null;
+      }
     };
   };
   const first = conditionRow(current.conditions?.[0]);

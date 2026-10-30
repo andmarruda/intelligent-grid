@@ -32,14 +32,25 @@ export function openFilterMenu(grid: IntelligentGrid, column: Column, anchor: HT
             value2.hidden = op.value !== 'between';
         };
         op.addEventListener('change', sync);
+        // typing a value without choosing an operator means "contains" (text) or "equals" (numbers, dates)
+        const fallback: FilterOperator | null = column.type === 'boolean' ? null : (operators.includes('contains') ? 'contains' : 'eq');
+        value.addEventListener('input', () => {
+            if (!op.value && fallback && value.value.trim() !== '') {
+                op.value = fallback;
+                sync();
+            }
+        });
         sync();
         return {
             element: h('div', { class: 'ig-condition' }, op, value, value2),
-            read: (): FilterCondition | null => op.value ? {
-                op: op.value as FilterOperator,
-                value: column.type === 'boolean' ? value.value === 'true' : value.value,
-                value2: value2.value
-            } : null
+            read: (): FilterCondition | null => {
+                const chosen = op.value || (fallback && value.value.trim() !== '' ? fallback : '');
+                return chosen ? {
+                    op: chosen as FilterOperator,
+                    value: column.type === 'boolean' ? value.value === 'true' : value.value,
+                    value2: value2.value
+                } : null;
+            }
         };
     };
 

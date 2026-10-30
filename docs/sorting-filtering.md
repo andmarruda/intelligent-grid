@@ -23,7 +23,8 @@ Calculated columns sort like any other column: their values are stored in SorlaD
 The ▾ button opens an Excel AutoFilter popover:
 
 1. sort buttons
-2. two conditions joined by **And / Or** (operators depend on the column type)
+2. two conditions joined by **And / Or** (operators depend on the column type). Typing a value without
+   choosing an operator uses **contains** for text and **equals** for numbers and dates
 3. a value checklist with search, counts, "(Select all)" and "(Blanks)". Like Excel, it lists the values left by the *other* columns' filters
 
 Active filters show as chips in the navbar, and the ▾ turns into ⧩.
