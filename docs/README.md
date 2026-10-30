@@ -3,7 +3,7 @@
 **English** · [Português (Brasil)](pt-BR/README.md)
 
 Intelligent Grid is an Excel-like data grid for the browser, written in TypeScript and backed by
-[SorlaDB](https://github.com/sysborg/sorla-db). Rows live in a SorlaDB collection, filters compile
+[SorlaDB](https://sorladb.dev.br). Rows live in a SorlaDB collection, filters compile
 to the Sorla query language, and a formula engine adds Excel calculations on top.
 
 ## Guides

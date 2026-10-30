@@ -78,7 +78,7 @@ Excel copy and paste, CSV and XLSX export, and virtual scrolling. No other setup
 | 🔎 **Filters people understand** | Excel's AutoFilter, a search box, and a visual query builder with nested AND / OR / NOT that produces MongoDB-style JSON your backend can run as is. |
 | 🌐 **Live data** | Infinite scroll over `fetch` or a WebSocket, rows changed by other users pushed in place, and 100 000 rows streamed in blocks over Server-Sent Events. |
 | ✅ **Built for forms and APIs** | Change tracking gives you inserted, updated and deleted rows as JSON, with a full history, accept and discard. |
-| 🪶 **Small and dependency free** | 56 kB gzip for everything. Its only companion is [SorlaDB](https://github.com/sysborg/sorla-db), the in-memory database it is built on. |
+| 🪶 **Small and dependency free** | 56 kB gzip for everything. Its only companion is [SorlaDB](https://sorladb.dev.br), the in-memory database it is built on. |
 | 🧑‍💻 **Made for developers** | TypeScript types, events for everything, cancelable hooks, custom editors and renderers, CSS variables, English and Portuguese labels, and docs in both languages. |
 
 ## A tour in pictures

@@ -1,6 +1,6 @@
 # Status do SorlaDB
 
-O Intelligent Grid guarda as suas linhas no [SorlaDB](https://github.com/sysborg/sorla-db) e exige o
+O Intelligent Grid guarda as suas linhas no [SorlaDB](https://sorladb.dev.br) e exige o
 **sorla-db 1.7.1+**. Construir a grade sobre a 1.0.0 revelou os problemas abaixo. Todos foram corrigidos
 no projeto original entre a 1.1.0 e a 1.7.1, e a suíte de testes do sorla-db cresceu de 45 testes (vários dos quais
 não verificavam nada) para 227, incluindo 500 consultas aninhadas aleatórias conferidas contra uma implementação

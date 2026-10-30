@@ -1,6 +1,6 @@
 # SorlaDB status
 
-Intelligent Grid stores its rows in [SorlaDB](https://github.com/sysborg/sorla-db) and requires
+Intelligent Grid stores its rows in [SorlaDB](https://sorladb.dev.br) and requires
 **sorla-db 1.7.1+**. Building the grid on 1.0.0 turned up the issues below. All of them were fixed
 upstream between 1.1.0 and 1.7.1, and the sorla-db test suite grew from 45 tests (several of which
 asserted nothing) to 227, including 500 random nested queries checked against a reference
