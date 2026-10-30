@@ -26,6 +26,8 @@ const shared: BuildOptions = {
     bundle: true,
     target: 'es2022',
     sourcemap: true,
+    // the maps point at src/, which is published: no second copy of every source inside each map
+    sourcesContent: false,
     legalComments: 'none',
     banner: { js: banner },
     logLevel: 'warning'
