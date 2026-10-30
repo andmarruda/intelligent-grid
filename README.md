@@ -53,7 +53,8 @@ Builds: `dist/index.js` (ES module), `dist/index.cjs` (CommonJS), `dist/intellig
 
 ## Documentation
 
-The full documentation is in [`docs/`](docs/README.md).
+The full documentation is in [`docs/`](docs/README.md), in English and
+[Português (Brasil)](docs/pt-BR/README.md).
 
 ### Getting started
 
