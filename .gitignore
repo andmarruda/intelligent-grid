@@ -6,3 +6,5 @@ test-results/
 playwright-report/
 publish-temp.md
 site/
+wiki/
+.wiki-checkout/

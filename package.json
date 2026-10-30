@@ -33,7 +33,8 @@
     "bench": "npm run build && node bench/run.ts",
     "test:e2e": "npm run build && playwright test",
     "site": "npm run build && node scripts/site.mjs",
-    "screenshots": "npm run build && node scripts/screenshots.mjs"
+    "screenshots": "npm run build && node scripts/screenshots.mjs",
+    "wiki": "node scripts/wiki.mjs"
   },
   "keywords": [
     "grid",
