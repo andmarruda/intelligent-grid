@@ -1,6 +1,6 @@
 # Theming
 
-Include `dist/intelligent-grid.css` (or `intelligent-grid/styles.css`). Everything is driven by
+Include `dist/intelligent-grid.css` (or `@andmarruda/intelligent-grid/styles.css`). Everything is driven by
 CSS custom properties on `.ig`, so a theme is a handful of variables:
 
 ```css

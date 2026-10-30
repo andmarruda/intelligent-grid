@@ -30,8 +30,8 @@ npm run demo     # build + serve os exemplos em http://localhost:5173/examples/
 | `dist/intelligent-grid.css`, `.min.css` | estilos |
 | `dist/types/**/*.d.ts` (+ maps) | declarações |
 
-O `exports` do `package.json` mapeia `intelligent-grid` (import/require/types), `intelligent-grid/styles.css`,
-`intelligent-grid/styles.min.css` e `intelligent-grid/browser`.
+O `exports` do `package.json` mapeia `@andmarruda/intelligent-grid` (import/require/types), `@andmarruda/intelligent-grid/styles.css`,
+`@andmarruda/intelligent-grid/styles.min.css` e `@andmarruda/intelligent-grid/browser`.
 
 O build mostra o tamanho em gzip do bundle para navegador e **falha acima do orçamento** (64 kB para o
 JavaScript, 5 kB para o CSS, definidos em `scripts/build.ts`). Aumente o orçamento de propósito quando um recurso

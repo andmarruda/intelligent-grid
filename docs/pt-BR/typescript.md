@@ -4,8 +4,8 @@ O pacote é escrito em TypeScript e inclui as declarações (`dist/types`). Tudo
 inclusive as definições de coluna, o modelo de filtro, os eventos e as funções de fórmula.
 
 ```ts
-import { IntelligentGrid } from 'intelligent-grid';
-import type { ColumnDefinition, GridOptions, FilterModel, SortEntry, Row, CellChangeDetail, GridEvent, CustomEditor, FormulaFunction } from 'intelligent-grid';
+import { IntelligentGrid } from '@andmarruda/intelligent-grid';
+import type { ColumnDefinition, GridOptions, FilterModel, SortEntry, Row, CellChangeDetail, GridEvent, CustomEditor, FormulaFunction } from '@andmarruda/intelligent-grid';
 
 interface Order {
     id: number;

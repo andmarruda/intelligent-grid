@@ -200,5 +200,5 @@ import {
     UndoStack, fillSeries, fillSeriesBackward,                       // utilitários de planilha
     columnStats, scaleColor, iconFor, ICON_SETS, sparkline, sparklineValues,
     RowLayout, columnWindow                                          // cálculos da virtualização
-} from 'intelligent-grid';
+} from '@andmarruda/intelligent-grid';
 ```

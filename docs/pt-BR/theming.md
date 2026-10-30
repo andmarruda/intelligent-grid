@@ -1,6 +1,6 @@
 # Temas
 
-Inclua `dist/intelligent-grid.css` (ou `intelligent-grid/styles.css`). Tudo é controlado por
+Inclua `dist/intelligent-grid.css` (ou `@andmarruda/intelligent-grid/styles.css`). Tudo é controlado por
 propriedades personalizadas do CSS em `.ig`, então um tema é só um punhado de variáveis:
 
 ```css

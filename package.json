@@ -1,7 +1,7 @@
 {
-  "name": "intelligent-grid",
+  "name": "@andmarruda/intelligent-grid",
   "version": "0.1.0",
-  "description": "Excel-like data grid for the browser powered by SorlaDB: multi-column sorting, filters, infinite append mode, editing, selection, CSV/XLSX export and a formula engine.",
+  "description": "Excel-like data grid for the browser, powered by SorlaDB: virtualized 100 000+ rows, ranges, fill handle, undo, formulas (137 functions), grouping, filters and query builder, CSV/XLSX import and export, WebSocket and Server-Sent Events loading.",
   "type": "module",
   "main": "dist/index.cjs",
   "exports": {
@@ -31,7 +31,9 @@
     "prepare": "husky",
     "prepublishOnly": "npm run check",
     "bench": "npm run build && node bench/run.ts",
-    "test:e2e": "npm run build && playwright test"
+    "test:e2e": "npm run build && playwright test",
+    "site": "npm run build && node scripts/site.mjs",
+    "screenshots": "npm run build && node scripts/screenshots.mjs"
   },
   "keywords": [
     "grid",
@@ -45,6 +47,14 @@
   ],
   "author": "Anderson Arruda <andmarruda@gmail.com>",
   "license": "MIT",
+  "homepage": "https://andmarruda.github.io/intelligent-grid/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/andmarruda/intelligent-grid.git"
+  },
+  "bugs": {
+    "url": "https://github.com/andmarruda/intelligent-grid/issues"
+  },
   "peerDependencies": {
     "sorla-db": "^1.7.1"
   },
@@ -60,6 +70,7 @@
     "husky": "^9.1.7",
     "jsdom": "^24.1.3",
     "lint-staged": "^16.4.0",
+    "marked": "^15.0.12",
     "sorla-db": "^1.7.1",
     "typescript": "5.9",
     "typescript-eslint": "^8.72.1",
@@ -77,5 +88,8 @@
   },
   "lint-staged": {
     "*.{ts,js}": "eslint --fix --max-warnings=0 --no-warn-ignored"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

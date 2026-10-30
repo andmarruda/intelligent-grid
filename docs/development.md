@@ -30,8 +30,8 @@ npm run demo     # build + serve the examples at http://localhost:5173/examples/
 | `dist/intelligent-grid.css`, `.min.css` | styles |
 | `dist/types/**/*.d.ts` (+ maps) | declarations |
 
-`package.json` `exports` maps `intelligent-grid` (import/require/types), `intelligent-grid/styles.css`,
-`intelligent-grid/styles.min.css` and `intelligent-grid/browser`.
+`package.json` `exports` maps `@andmarruda/intelligent-grid` (import/require/types), `@andmarruda/intelligent-grid/styles.css`,
+`@andmarruda/intelligent-grid/styles.min.css` and `@andmarruda/intelligent-grid/browser`.
 
 The build prints the gzip size of the browser bundle and **fails above its budget** (64 kB for the
 JavaScript, 5 kB for the CSS, set in `scripts/build.ts`). Raise the budget on purpose when a feature

@@ -75,7 +75,7 @@ grid.on('export', event => analytics.track('export', event.detail.format));
 The writers are exported too:
 
 ```ts
-import { toCSV, toXLSX, zip } from 'intelligent-grid';
+import { toCSV, toXLSX, zip } from '@andmarruda/intelligent-grid';
 
 const csv = toCSV(rows, [{ field: 'name', title: 'Name' }], { delimiter: ';' });
 ```

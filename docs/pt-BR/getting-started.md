@@ -3,7 +3,7 @@
 ## Instalação
 
 ```bash
-npm install intelligent-grid sorla-db
+npm install @andmarruda/intelligent-grid sorla-db
 ```
 
 O `sorla-db` (1.7.1 ou mais recente) é uma peer dependency: a grade guarda as linhas no SorlaDB, e você fornece a biblioteca.
@@ -36,15 +36,15 @@ Cada grade cria seu próprio banco de dados no SorlaDB (`intelligent_grid_1`, `i
 
 ```ts
 // bundler / ES module
-import { IntelligentGrid } from 'intelligent-grid';
-import 'intelligent-grid/styles.css';
+import { IntelligentGrid } from '@andmarruda/intelligent-grid';
+import '@andmarruda/intelligent-grid/styles.css';
 ```
 
 ```html
 <!-- sem bundler -->
-<link rel="stylesheet" href="node_modules/intelligent-grid/dist/intelligent-grid.min.css">
+<link rel="stylesheet" href="node_modules/@andmarruda/intelligent-grid/dist/intelligent-grid.min.css">
 <script src="node_modules/sorla-db/dist/sorla.min.js"></script>
-<script src="node_modules/intelligent-grid/dist/intelligent-grid.min.js"></script>
+<script src="node_modules/@andmarruda/intelligent-grid/dist/intelligent-grid.min.js"></script>
 <script>
   const grid = new IntelligentGrid('#grid', { columns: [...], data: [...] });
   // todos os outros exports ficam pendurados no global: IntelligentGrid.toCSV, IntelligentGrid.ERRORS...
@@ -58,7 +58,7 @@ import 'intelligent-grid/styles.css';
 ```
 
 ```ts
-import { IntelligentGrid } from 'intelligent-grid';
+import { IntelligentGrid } from '@andmarruda/intelligent-grid';
 
 const grid = new IntelligentGrid('#orders', {
     locale: 'pt-BR',

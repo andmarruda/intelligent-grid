@@ -57,7 +57,7 @@ The `import` event fires with the same result object.
 ## Standalone readers
 
 ```ts
-import { parseDelimited, detectDelimiter, readXlsx } from 'intelligent-grid';
+import { parseDelimited, detectDelimiter, readXlsx } from '@andmarruda/intelligent-grid';
 
 parseDelimited('a,"b,c"\n1,2');        // [['a', 'b,c'], ['1', '2']]
 const sheet = await readXlsx(bytes);  // { name, rows: [['Name', 'Qty'], ['Pen', 3]] }

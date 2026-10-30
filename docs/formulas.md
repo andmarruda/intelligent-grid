@@ -172,7 +172,7 @@ grid.evaluate('=[@qty]*2', id);                      // in the context of one ro
 ## Custom functions
 
 ```ts
-import { IntelligentGrid, FormulaError, ERRORS } from 'intelligent-grid';
+import { IntelligentGrid, FormulaError, ERRORS } from '@andmarruda/intelligent-grid';
 
 // every grid
 IntelligentGrid.defineFunction('VAT', ([value, rate]) => {
@@ -204,7 +204,7 @@ IntelligentGrid.defineFunction('FIRSTOK', (args, ctx, evaluate) => {
 ## Using the engine without a grid
 
 ```ts
-import { compile, evaluate, parse, toExcelFormula } from 'intelligent-grid';
+import { compile, evaluate, parse, toExcelFormula } from '@andmarruda/intelligent-grid';
 
 const { ast } = compile('=[@qty]*[@price]');
 evaluate(ast, { rowValue: f => ({ qty: 2, price: 5 })[f] ?? null, columnValues: () => [] });   // 10
