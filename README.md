@@ -16,6 +16,7 @@ CSV & XLSX import and export · live data over WebSocket and Server-Sent Events 
 [**Documentation**](https://andmarruda.github.io/intelligent-grid/en/) ·
 [**Documentação em português**](https://andmarruda.github.io/intelligent-grid/pt-BR/) ·
 [**Live examples**](https://andmarruda.github.io/intelligent-grid/examples/) ·
+[**React · Vue · Svelte · Angular**](#react-vue-svelte-and-angular) ·
 [npm](https://www.npmjs.com/package/@andmarruda/intelligent-grid)
 
 <img src="docs/assets/spreadsheet.png" alt="Intelligent Grid: data bars, color scales, icon sets, sparklines, a pinned column and a selected range with its fill handle" width="100%">
@@ -55,6 +56,7 @@ Excel copy and paste, CSV and XLSX export, and virtual scrolling. No other setup
 - [Why Intelligent Grid](#why-intelligent-grid)
 - [A tour in pictures](#a-tour-in-pictures)
 - [Installation](#installation)
+- [React, Vue, Svelte and Angular](#react-vue-svelte-and-angular)
 - [Everything it does](#everything-it-does)
 - [Performance](#performance)
 - [Formulas](#formulas)
@@ -140,6 +142,34 @@ the grid finds `window.sorla` by itself.
 | `dist/types` | TypeScript declarations (with maps to the sources) |
 
 Works in every current browser. See [Getting started](docs/getting-started.md).
+
+## React, Vue, Svelte and Angular
+
+Native components for each framework live in
+[**intelligent-grid-wrappers**](https://github.com/andmarruda/intelligent-grid-wrappers). They take every
+option, forward every event and expose the grid instance.
+
+| Framework | Package | |
+|---|---|---|
+| React 19+ | [`@andmarruda/intelligent-grid-react`](https://www.npmjs.com/package/@andmarruda/intelligent-grid-react) | `<IntelligentGrid columns={columns} data={rows} onCellChange={save} />` |
+| Vue 3.5+ | [`@andmarruda/intelligent-grid-vue`](https://www.npmjs.com/package/@andmarruda/intelligent-grid-vue) | `<IntelligentGrid :columns="columns" :data="rows" @cell-change="save" />` |
+| Svelte 5+ | [`@andmarruda/intelligent-grid-svelte`](https://www.npmjs.com/package/@andmarruda/intelligent-grid-svelte) | `<IntelligentGrid {columns} data={rows} onCellChange={save} />` |
+| Angular 20+ | [`@andmarruda/intelligent-grid-angular`](https://www.npmjs.com/package/@andmarruda/intelligent-grid-angular) | `<intelligent-grid [columns]="columns" [data]="rows" (cellChange)="save($event)" />` |
+
+```bash
+npm install @andmarruda/intelligent-grid-react @andmarruda/intelligent-grid sorla-db
+```
+
+```tsx
+import { IntelligentGrid } from '@andmarruda/intelligent-grid-react';
+import '@andmarruda/intelligent-grid/styles.css';
+import sorla from 'sorla-db';
+
+<IntelligentGrid columns={columns} data={rows} options={{ sorla, idField: 'id', editable: true }}
+    onCellChange={e => save(e.detail.row)} />
+```
+
+Full examples for all four: [React, Vue, Svelte and Angular](docs/frameworks.md).
 
 ## Everything it does
 
@@ -344,7 +374,7 @@ English and Portuguese, and in [`docs/`](docs/README.md) ([pt-BR](docs/pt-BR/REA
 
 | Start | Features | Formulas | Reference | Project |
 |---|---|---|---|---|
-| [Getting started](docs/getting-started.md) | [Sorting & filtering](docs/sorting-filtering.md) | [Formulas](docs/formulas.md) | [API](docs/api.md) | [Architecture](docs/architecture.md) |
+| [Getting started](docs/getting-started.md) · [Frameworks](docs/frameworks.md) | [Sorting & filtering](docs/sorting-filtering.md) | [Formulas](docs/formulas.md) | [API](docs/api.md) | [Architecture](docs/architecture.md) |
 | [Options](docs/options.md) | [Advanced filter](docs/query-builder.md) | [137 functions](docs/functions.md) | [Events](docs/events.md) | [Benchmarks](docs/benchmarks.md) |
 | [Columns](docs/columns.md) | [Editing](docs/editing.md) | [Number formats](docs/number-formats.md) | [TypeScript](docs/typescript.md) | [SorlaDB status](docs/sorla-db.md) |
 | | [Spreadsheet](docs/spreadsheet.md) · [Grouping](docs/grouping.md) | | [Theming](docs/theming.md) | [Development](docs/development.md) |

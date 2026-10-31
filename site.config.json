@@ -10,7 +10,7 @@
   "hero": {
     "image": "docs/assets/spreadsheet.png",
     "alt": "Intelligent Grid with data bars, color scales, icon sets, sparklines and a pinned column",
-    "buttons": [{ "label": "Live examples", "href": "examples/index.html" }]
+    "buttons": [{ "label": "Live examples", "href": "examples/index.html" }, { "label": "React · Vue · Svelte · Angular", "href": "en/frameworks.html" }]
   },
   "highlights": [
     { "title": "Huge data, smooth scroll", "text": "Row and column virtualization: 100 000 rows open in under half a second and scroll at 60 fps." },
@@ -21,7 +21,7 @@
     { "title": "Real import and export", "text": "CSV and XLSX in both directions, without dependencies, formulas kept as Excel formulas." },
     { "title": "Live server data", "text": "Infinite scroll over fetch or WebSocket, and Server-Sent Events loading 100 000 rows in blocks." },
     { "title": "Forms-ready change tracking", "text": "Inserted, updated and deleted rows as JSON, history, accept and discard." },
-    { "title": "Typed, themable, translated", "text": "TypeScript, CSS variables with dark mode, English and Portuguese out of the box." }
+    { "title": "Typed, themable, translated", "text": "TypeScript, components for React, Vue, Svelte and Angular, CSS variables with dark mode, English and Portuguese." }
   ],
   "languages": [
     {

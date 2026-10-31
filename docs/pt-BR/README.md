@@ -11,6 +11,7 @@ para a linguagem de consulta do Sorla e um motor de fórmulas adiciona os cálcu
 | Página | O que aborda |
 |---|---|
 | [Primeiros passos](getting-started.md) | Instalação, ES module / CommonJS / bundle para navegador, configuração do SorlaDB, a primeira grade |
+| [React, Vue, Svelte e Angular](frameworks.md) | Componentes prontos para cada framework, como mapeiam props, eventos e a instância |
 | [Opções da grade](options.md) | Todas as opções do construtor |
 | [Colunas](columns.md) | Esquema de colunas, tipos, formatos, renderização, colunas ocultas |
 | [Ordenação e filtros](sorting-filtering.md) | Ordenação por várias colunas, menu AutoFiltro, modelo de filtros, busca |

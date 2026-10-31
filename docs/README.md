@@ -11,6 +11,7 @@ to the Sorla query language, and a formula engine adds Excel calculations on top
 | Page | What it covers |
 |---|---|
 | [Getting started](getting-started.md) | Install, ES module / CommonJS / browser bundle, SorlaDB setup, the first grid |
+| [React, Vue, Svelte and Angular](frameworks.md) | Ready-made components for each framework, how they map props, events and the instance |
 | [Grid options](options.md) | Every constructor option |
 | [Columns](columns.md) | Column schema, types, formats, rendering, hidden columns |
 | [Sorting & filtering](sorting-filtering.md) | Multi-column sort, AutoFilter menu, filter model, search |
